@@ -47,6 +47,7 @@ import fcntl
 import struct
 import ctypes
 import stat
+import subprocess
 from typing import Optional, Dict, Tuple, BinaryIO, Any
 
 
@@ -213,10 +214,11 @@ def get_file_encoding_fcntl(path: str, fd: Optional[int] = None,
 def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
                       verbose: bool = False) -> bool:
     """
-    Set file CCSID by opening file and using F_CONTROL_CVT with command 2.
+    Set file CCSID using z/OS chtag command.
     
-    Opens the file, sets the CCSID using F_CONTROL_CVT, then closes it.
-    This approach avoids subprocess calls while setting the file tag.
+    F_SETTAG through Python's fcntl is unreliable - it may return errno 121
+    but not actually set the tag, especially on subsequent calls. The chtag
+    command is the reliable way to set file tags on z/OS.
     
     Args:
         path: File path to tag
@@ -227,47 +229,57 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
     Returns:
         True if successful, False otherwise
     """
-    fd = None
     try:
-        # Open file for read/write to modify its attributes
-        fd = os.open(path, os.O_RDWR)
-        
         if verbose:
-            print(f"DEBUG: Setting file CCSID for {path} using F_CONTROL_CVT")
-            print(f"  File descriptor: {fd}")
+            print(f"DEBUG: Setting file CCSID for {path} using chtag command")
             print(f"  Target CCSID={ccsid}, text_flag={text_flag}")
         
-        # Create f_cnvrt structure for setting CCSID
-        # cvtcmd=2 means "set file CCSID"
-        cvt = f_cnvrt()
-        cvt.cvtcmd = 2  # Command 2 = set CCSID
-        cvt.pccsid = ccsid  # Set process CCSID to target
-        cvt.fccsid = ccsid  # Set file CCSID to target
+        # Build chtag command
+        # chtag -t -c <ccsid> <file>  for text files
+        # chtag -b <file>              for binary files
+        if text_flag:
+            cmd = ['chtag', '-t', '-c', str(ccsid), path]
+        else:
+            cmd = ['chtag', '-b', path]
         
         if verbose:
-            print(f"  Structure: cvtcmd={cvt.cvtcmd}, pccsid={cvt.pccsid}, fccsid={cvt.fccsid}")
+            print(f"  Running: {' '.join(cmd)}")
         
-        # Convert structure to bytes
-        cvt_bytes = bytes(cvt)
-        
-        if verbose:
-            print(f"  Structure size: {len(cvt_bytes)} bytes")
-            print(f"  Structure hex: {cvt_bytes.hex()}")
-        
-        # Call fcntl with F_CONTROL_CVT to set the file's CCSID
-        result = fcntl.fcntl(fd, F_CONTROL_CVT, cvt_bytes)
+        # Run chtag command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False
+        )
         
         if verbose:
-            print(f"  fcntl returned: {result}")
+            print(f"  Return code: {result.returncode}")
+            if result.stdout:
+                print(f"  stdout: {result.stdout}")
+            if result.stderr:
+                print(f"  stderr: {result.stderr}")
         
-        # Close the file to commit the changes
-        os.close(fd)
-        fd = None
-        
-        if verbose:
-            print(f"  Successfully set file CCSID to {ccsid}")
-        
-        return True
+        if result.returncode == 0:
+            # Verify the tag was set
+            actual_encoding = get_file_encoding_fcntl(path, verbose=False)
+            expected_encoding = ENCODING_MAP.get(ccsid, f'CCSID-{ccsid}')
+            
+            if verbose:
+                print(f"  Verification: expected={expected_encoding}, actual={actual_encoding}")
+            
+            if actual_encoding == expected_encoding:
+                if verbose:
+                    print(f"  Successfully set file CCSID to {ccsid}")
+                return True
+            else:
+                if verbose:
+                    print(f"  Tag verification failed: expected {expected_encoding}, got {actual_encoding}")
+                return False
+        else:
+            if verbose:
+                print(f"  chtag command failed with return code {result.returncode}")
+            return False
         
     except Exception as e:
         if verbose:
@@ -275,13 +287,6 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
             import traceback
             traceback.print_exc()
         return False
-    finally:
-        # Ensure file descriptor is closed
-        if fd is not None:
-            try:
-                os.close(fd)
-            except:
-                pass
 
 
 def get_file_tag_info(path: str, verbose: bool = False) -> Optional[FileTagInfo]:

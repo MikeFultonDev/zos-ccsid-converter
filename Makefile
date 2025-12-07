@@ -50,7 +50,7 @@ venv:
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf blddir/
+	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info
 	rm -rf zos_ccsid_converter.egg-info
