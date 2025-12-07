@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Command-line interface for zos-ebcdic-converter.
+Command-line interface for zos-ccsid-converter.
 """
 
 import sys
@@ -15,29 +15,29 @@ from .converter import (
 
 
 def main():
-    """Command-line interface for the EBCDIC converter"""
+    """Command-line interface for the CCSID converter"""
     parser = argparse.ArgumentParser(
         description='Convert files to EBCDIC using z/OS fcntl',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Convert a file
-  zos-ebcdic-converter input.txt output.txt
+  zos-ccsid-converter input.txt output.txt
   
   # Get file encoding info
-  zos-ebcdic-converter --info input.txt
+  zos-ccsid-converter --info input.txt
   
   # Convert with verbose output
-  zos-ebcdic-converter -v input.txt output.txt
+  zos-ccsid-converter -v input.txt output.txt
   
   # Convert from stdin to file
-  cat input.txt | zos-ebcdic-converter --stdin output.txt
+  cat input.txt | zos-ccsid-converter --stdin output.txt
 """
     )
     
-    parser.add_argument('input', nargs='?', help='Input file path')
+    parser.add_argument('input', nargs='?', help='Input file path (or output file when using --stdin)')
     parser.add_argument('output', nargs='?', help='Output file path')
-    parser.add_argument('--info', action='store_true', 
+    parser.add_argument('--info', action='store_true',
                        help='Show file encoding info only')
     parser.add_argument('--stdin', action='store_true',
                        help='Read from stdin instead of file')
@@ -64,11 +64,13 @@ Examples:
             return 1
     
     elif args.stdin:
-        if not args.output:
+        # When using --stdin, the first positional argument is the output file
+        output_file = args.input
+        if not output_file:
             print("ERROR: Output file required with --stdin", file=sys.stderr)
             return 1
         
-        with open(args.output, 'wb') as f_out:
+        with open(output_file, 'wb') as f_out:
             stats = convert_stream_to_ebcdic(
                 sys.stdin.buffer,
                 f_out,
@@ -78,8 +80,8 @@ Examples:
         
         if stats['success']:
             # Tag output file
-            set_file_tag_fcntl(args.output, CCSID_IBM1047, verbose=args.verbose)
-            print(f"Converted {stats['bytes_read']} bytes from stdin to {args.output}")
+            set_file_tag_fcntl(output_file, CCSID_IBM1047, verbose=args.verbose)
+            print(f"Converted {stats['bytes_read']} bytes from stdin to {output_file}")
             return 0
         else:
             print(f"ERROR: {stats['error_message']}", file=sys.stderr)
