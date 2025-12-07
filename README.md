@@ -547,21 +547,6 @@ Failed: 0
 **Original:** ~10-50ms overhead per file (subprocess spawn)
 **New:** ~1-5ms overhead per file (direct system call)
 
-## Integration with Existing Code
-
-The new converter can be used as a drop-in replacement for the original `convert_to_ebcdic` function:
-
-```python
-# Original
-from batchtsocmd import convert_to_ebcdic
-success = convert_to_ebcdic(input_path, output_path, verbose=True)
-
-# New (with enhanced return value)
-from ebcdic_converter_fcntl import convert_to_ebcdic_fcntl
-stats = convert_to_ebcdic_fcntl(input_path, output_path, verbose=True)
-success = stats['success']
-```
-
 ## Technical Details
 
 ### File Tag Detection Algorithm
@@ -621,8 +606,8 @@ The converter uses `errors='replace'` to handle unconvertible characters. Charac
 
 ## License
 
-This code is part of the CICS Banking Sample Application and follows the same license terms.
+Apache License Version 2.0
 
 ## Author
 
-Created as an enhancement to the CICS Banking Sample Application build tools.
+Mike Fulton

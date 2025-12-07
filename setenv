@@ -3,12 +3,12 @@
 # This file needs to be SOURCEd
 # See if there is a host specific config file and source it.
 
-if [ "${CBSADIR}" = '' ] || ! [ -e "${CBSADIR}/setenv" ]; then
-  echo "CBSADIR has to be set by the script source'ing this file to the directory of this file." >&2
+if [ "${CONVDIR}" = '' ] || ! [ -e "${CONVDIR}/setenv" ]; then
+  echo "CONVDIR has to be set by the script source'ing this file to the directory of this file." >&2
 else
   export HOSTNAME="$(hostname -s)"
 
-  host_config="${CBSADIR}/${HOSTNAME}.cfg"
+  host_config="${CONVDIR}/${HOSTNAME}.cfg"
   if [ -e "${host_config}" ]; then
     source "${host_config}"
   fi

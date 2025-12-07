@@ -24,8 +24,8 @@ from .converter import (
     PYTHON_ENCODING_MAP,
 )
 
-__version__ = '1.0.0'
-__author__ = 'IBM'
+__version__ = '0.1.5'
+__author__ = 'Mike Fulton'
 __all__ = [
     'CodePageService',
     'detect_code_page',

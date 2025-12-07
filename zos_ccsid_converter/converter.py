@@ -64,10 +64,14 @@ class f_cnvrt(ctypes.BigEndianStructure):
     z/OS f_cnvrt structure for F_CONTROL_CVT operations.
     
     struct f_cnvrt {
-        int cvtcmd;      // Command: 3=query, others for setting
+        int cvtcmd;      // Command: 2=set, 3=query
         short pccsid;    // Process CCSID
         short fccsid;    // File CCSID
     }
+    
+    Commands:
+    - 2: Set file CCSID (fccsid) and process CCSID (pccsid)
+    - 3: Query file CCSID
     
     Note: Using BigEndianStructure to explicitly specify z/OS byte order.
     """
@@ -209,10 +213,10 @@ def get_file_encoding_fcntl(path: str, fd: Optional[int] = None,
 def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
                       verbose: bool = False) -> bool:
     """
-    Set file tag using z/OS fcntl F_SETTAG operation.
+    Set file CCSID by opening file and using F_CONTROL_CVT with command 2.
     
-    Uses the attrib_t structure converted to bytes for fcntl.fcntl().
-    F_SETTAG requires passing the structure as a byte buffer.
+    Opens the file, sets the CCSID using F_CONTROL_CVT, then closes it.
+    This approach avoids subprocess calls while setting the file tag.
     
     Args:
         path: File path to tag
@@ -223,51 +227,61 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
     Returns:
         True if successful, False otherwise
     """
+    fd = None
     try:
+        # Open file for read/write to modify its attributes
         fd = os.open(path, os.O_RDWR)
         
-        try:
-            if verbose:
-                print(f"DEBUG: Setting file tag for {path} using F_SETTAG")
-                print(f"  CCSID={ccsid}, text_flag={text_flag}")
-            
-            # Create attrib_t structure
-            tag = attrib_t()
-            tag.att_filetagchg = 1  # Indicate we want to change the tag
-            tag.att_rsvd1 = 0
-            tag.att_txtflag = 1 if text_flag else 0
-            tag.att_ccsid = ccsid
-            tag.att_rsvd2[0] = 0
-            tag.att_rsvd2[1] = 0
-            
-            if verbose:
-                print(f"  Structure: filetagchg={tag.att_filetagchg}, txtflag={tag.att_txtflag}, ccsid={tag.att_ccsid}")
-            
-            # Convert structure to bytes for fcntl
-            # F_SETTAG needs the structure passed as a byte buffer
-            tag_bytes = bytes(tag)
-            
-            if verbose:
-                print(f"  Structure size: {len(tag_bytes)} bytes")
-                print(f"  Structure hex: {tag_bytes.hex()}")
-            
-            # Call fcntl with F_SETTAG using byte buffer
-            fcntl.fcntl(fd, F_SETTAG, tag_bytes)
-            
-            if verbose:
-                print(f"  Successfully set file tag")
-            
-            return True
-            
-        finally:
-            os.close(fd)
-            
+        if verbose:
+            print(f"DEBUG: Setting file CCSID for {path} using F_CONTROL_CVT")
+            print(f"  File descriptor: {fd}")
+            print(f"  Target CCSID={ccsid}, text_flag={text_flag}")
+        
+        # Create f_cnvrt structure for setting CCSID
+        # cvtcmd=2 means "set file CCSID"
+        cvt = f_cnvrt()
+        cvt.cvtcmd = 2  # Command 2 = set CCSID
+        cvt.pccsid = ccsid  # Set process CCSID to target
+        cvt.fccsid = ccsid  # Set file CCSID to target
+        
+        if verbose:
+            print(f"  Structure: cvtcmd={cvt.cvtcmd}, pccsid={cvt.pccsid}, fccsid={cvt.fccsid}")
+        
+        # Convert structure to bytes
+        cvt_bytes = bytes(cvt)
+        
+        if verbose:
+            print(f"  Structure size: {len(cvt_bytes)} bytes")
+            print(f"  Structure hex: {cvt_bytes.hex()}")
+        
+        # Call fcntl with F_CONTROL_CVT to set the file's CCSID
+        result = fcntl.fcntl(fd, F_CONTROL_CVT, cvt_bytes)
+        
+        if verbose:
+            print(f"  fcntl returned: {result}")
+        
+        # Close the file to commit the changes
+        os.close(fd)
+        fd = None
+        
+        if verbose:
+            print(f"  Successfully set file CCSID to {ccsid}")
+        
+        return True
+        
     except Exception as e:
         if verbose:
-            print(f"ERROR: Failed to set file tag for {path}: {e}")
+            print(f"ERROR: Failed to set file CCSID for {path}: {e}")
             import traceback
             traceback.print_exc()
         return False
+    finally:
+        # Ensure file descriptor is closed
+        if fd is not None:
+            try:
+                os.close(fd)
+            except:
+                pass
 
 
 def get_file_tag_info(path: str, verbose: bool = False) -> Optional[FileTagInfo]:
@@ -788,3 +802,4 @@ Examples:
   # Convert from stdin to file
   cat input.txt | ebcdic_converter_fcntl.py --stdin output.txt
 """
+    )
