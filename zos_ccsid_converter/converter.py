@@ -177,7 +177,7 @@ def get_file_encoding_fcntl(path: str, fd: Optional[int] = None,
         if close_fd and fd is not None:
             try:
                 os.close(fd)
-            except:
+            except Exception:
                 pass
 
 
@@ -293,7 +293,7 @@ def is_named_pipe(path: str) -> bool:
     """Check if a path is a named pipe (FIFO)"""
     try:
         return stat.S_ISFIFO(os.stat(path).st_mode)
-    except (OSError, FileNotFoundError):
+    except OSError:
         return False
 
 
@@ -366,17 +366,17 @@ def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
             # Tag output file as IBM-1047 using fcntl
             if set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose):
                 if verbose:
-                    print(f"Tagged output file as IBM-1047")
+                    print("Tagged output file as IBM-1047")
             else:
                 if verbose:
-                    print(f"Warning: Could not tag output file")
+                    print("Warning: Could not tag output file")
         
         else:
             # Already EBCDIC or untagged (treat as EBCDIC) - copy as binary
             stats['conversion_needed'] = False
             
             if verbose:
-                print(f"File is already EBCDIC (or untagged), copying as binary...")
+                print("File is already EBCDIC (or untagged), copying as binary...")
             
             with open(input_path, 'rb') as f_in:
                 content = f_in.read()
@@ -390,7 +390,7 @@ def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
             if encoding == 'untagged':
                 if set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose):
                     if verbose:
-                        print(f"Tagged output file as IBM-1047")
+                        print("Tagged output file as IBM-1047")
         
         stats['success'] = True
         
@@ -759,6 +759,7 @@ def convert_data(data: bytes, source_encoding: str, target_encoding: str) -> byt
 def main():
     """Simple command-line interface for testing"""
     import argparse
+    import sys
     
     parser = argparse.ArgumentParser(
         description='Convert files to EBCDIC using z/OS fcntl',
@@ -778,3 +779,41 @@ Examples:
   cat input.txt | ebcdic_converter_fcntl.py --stdin output.txt
 """
     )
+    
+    parser.add_argument('input', nargs='?', help='Input file path')
+    parser.add_argument('output', nargs='?', help='Output file path')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--info', action='store_true', help='Show file encoding info')
+    parser.add_argument('--stdin', action='store_true', help='Read from stdin')
+    
+    args = parser.parse_args()
+    
+    try:
+        if args.info:
+            if not args.input:
+                parser.error("--info requires an input file")
+            info = get_file_tag_info(args.input, verbose=args.verbose)
+            if info:
+                print(f"CCSID: {info.ccsid}, Text: {info.text_flag}")
+            return 0
+        
+        if args.stdin:
+            if not args.output:
+                parser.error("--stdin requires an output file")
+            convert_stream_to_ebcdic(sys.stdin.buffer, open(args.output, 'wb'),
+                                    verbose=args.verbose)
+            return 0
+        
+        if not args.input or not args.output:
+            parser.error("input and output files are required")
+        
+        convert_to_ebcdic_fcntl(args.input, args.output, verbose=args.verbose)
+        return 0
+        
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
