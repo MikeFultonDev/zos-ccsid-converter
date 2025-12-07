@@ -132,14 +132,14 @@ python3 test_ebcdic_converter.py --keep-files
 
 ## Key Features
 
-1. **Native z/OS fcntl Integration**
-   - Uses F_CONTROL_CVT (13) for encoding detection
-   - Uses F_SETTAG (12) for file tagging
-   - Direct system calls (no subprocess overhead)
+1. **Native z/OS File Tagging**
+   - Uses F_CONTROL_CVT (13) for encoding detection (direct fcntl system call)
+   - Uses chtag command for file tag setting (reliable)
+   - Minimal subprocess overhead (only for tag setting)
 
 2. **Proper Big-Endian Support**
    - Uses `ctypes.BigEndianStructure` for z/OS byte order
-   - Correct handling of f_cnvrt and attrib_t structures
+   - Correct handling of f_cnvrt structure
 
 3. **Comprehensive API**
    - CodePageService class for object-oriented usage

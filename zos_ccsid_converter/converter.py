@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-ebcdic_converter_fcntl.py - EBCDIC conversion using z/OS fcntl file tagging
+converter.py - EBCDIC conversion using z/OS file tagging
 
 This module provides EBCDIC conversion functionality using z/OS-specific
-fcntl operations for file tagging instead of external commands.
+methods for file tagging.
 
 Based on IBM z/OS documentation:
 https://www.ibm.com/docs/en/zos/3.2.0?topic=SSLTBW_3.2.0/com.ibm.zos.v3r2.bpxbd00/rtfcndesc.html
 
 Implementation Details:
 - Uses F_CONTROL_CVT (13) with f_cnvrt structure to query file CCSID
-- Uses F_SETTAG (12) with attrib_t structure to set file tags (may not be supported)
+- Uses chtag command for reliable file tag setting
 - Implements ctypes.BigEndianStructure for proper z/OS big-endian byte order
 - Uses fcntl.fcntl() for system calls with proper structure marshalling
 
@@ -20,25 +20,18 @@ Structures:
       short pccsid;    // Process CCSID
       short fccsid;    // File CCSID (output)
   }
-  
-  struct attrib_t {
-      int att_filetagchg;           // File tag change flag (1=change)
-      int att_rsvd1;                // Reserved (0)
-      unsigned short att_txtflag;   // Text flag (1=text, 0=binary)
-      unsigned short att_ccsid;     // CCSID
-      int att_rsvd2[2];             // Reserved (0, 0)
-  }
 
-Key improvements over command-based approach:
-- Direct system calls via fcntl (no subprocess overhead)
+Key features:
+- Direct fcntl system calls for file tag detection (no subprocess overhead)
 - Uses ctypes.BigEndianStructure for correct z/OS byte order
-- More reliable file tag detection via F_CONTROL_CVT
+- Reliable file tag detection via F_CONTROL_CVT
+- Reliable file tag setting via chtag command
 - Better error handling for unconvertible characters
 - Support for both files and streams/pipes
 - Tested and verified on z/OS
 
-Note: F_SETTAG may not be supported through Python's fcntl on all z/OS systems.
-      The primary functionality (F_CONTROL_CVT for reading tags) is fully working.
+Note: F_SETTAG through Python's fcntl is unreliable (see test_f_settag_issue.py).
+      The chtag command is used instead for setting file tags.
 """
 
 import os
@@ -82,29 +75,6 @@ class f_cnvrt(ctypes.BigEndianStructure):
         ("fccsid", ctypes.c_int16),   # 2 bytes
     ]  # Total: 8 bytes
 
-
-# Define attrib_t structure for F_SETTAG
-class attrib_t(ctypes.BigEndianStructure):
-    """
-    z/OS attrib_t structure for F_SETTAG operations.
-    
-    struct attrib_t {
-        int att_filetagchg;           // File tag change flag (1=change)
-        int att_rsvd1;                // Reserved (0)
-        unsigned short att_txtflag;   // Text flag (1=text, 0=binary)
-        unsigned short att_ccsid;     // CCSID
-        int att_rsvd2[2];             // Reserved (0, 0)
-    }
-    
-    Note: Using BigEndianStructure to explicitly specify z/OS byte order.
-    """
-    _fields_ = [
-        ("att_filetagchg", ctypes.c_int32),      # 4 bytes
-        ("att_rsvd1", ctypes.c_int32),           # 4 bytes
-        ("att_txtflag", ctypes.c_uint16),        # 2 bytes
-        ("att_ccsid", ctypes.c_uint16),          # 2 bytes
-        ("att_rsvd2", ctypes.c_int32 * 2),       # 8 bytes (array of 2 ints)
-    ]  # Total: 20 bytes
 
 # CCSID (Coded Character Set ID) mappings
 CCSID_ISO8859_1 = 819   # ASCII/ISO8859-1

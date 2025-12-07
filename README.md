@@ -1,10 +1,10 @@
 # z/OS CCSID Converter
 
-A Python package for working with z/OS file code pages (CCSID) and converting files between different encodings on z/OS systems using native fcntl system calls.
+A Python package for working with z/OS file code pages (CCSID) and converting files between different encodings on z/OS systems.
 
 ## Overview
 
-This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses z/OS-specific `fcntl` system calls for file tagging instead of external commands, providing better performance, reliability, and direct access to file metadata. While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
+This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses z/OS-specific `fcntl` system calls for file tag detection and the `chtag` command for file tag setting, providing reliable access to file metadata. While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
 
 ## Installation
 
@@ -72,12 +72,12 @@ stats = service.convert_file('/input.txt', '/output.txt')
 
 **Core Capabilities:**
 - Direct fcntl system calls for file tag detection (F_CONTROL_CVT with f_cnvrt structure)
-- Direct fcntl system calls for file tag setting (F_SETTAG with attrib_t structure - may not be supported)
+- Uses `chtag` command for reliable file tag setting
 - Uses Python ctypes.BigEndianStructure for proper z/OS big-endian byte order
 - Support for both regular files and streams/pipes
 - Graceful handling of unconvertible characters
 - Detailed conversion statistics
-- No subprocess overhead
+- Minimal subprocess overhead (only for tag setting)
 - Tested and verified on z/OS with 10/10 tests passing
 
 ## API Reference
@@ -293,26 +293,31 @@ See `examples/example_service_usage.py` for complete working examples:
 
 ## Technical Details
 
-### z/OS fcntl Implementation
+### z/OS File Tagging Implementation
 
-The package uses z/OS-specific fcntl system calls for file tagging:
+The package uses z/OS-specific methods for file tagging:
 
-**Encoding Detection:**
+**Encoding Detection (F_CONTROL_CVT):**
 ```python
 # Uses F_CONTROL_CVT (13) with f_cnvrt structure
 qcvt = f_cnvrt(3, 0, 0)  # cvtcmd=3 for query
-    result = fcntl.fcntl(fd, F_CONTROL_CVT, qcvt)
-    cvt_result = f_cnvrt.from_buffer_copy(result)
-    
-    # Get file CCSID directly
-    ccsid = cvt_result.fccsid
+result = fcntl.fcntl(fd, F_CONTROL_CVT, qcvt)
+cvt_result = f_cnvrt.from_buffer_copy(result)
+
+# Get file CCSID directly
+ccsid = cvt_result.fccsid
+```
+
+**File Tag Setting (chtag command):**
+```python
+# Uses chtag command for reliable tag setting
+subprocess.run(['chtag', '-t', '-c', str(ccsid), path])
 ```
 
 **Advantages:**
-- Direct system call (no subprocess)
+- F_CONTROL_CVT: Direct system call (no subprocess), works with file descriptors
 - Uses ctypes.BigEndianStructure for proper z/OS big-endian byte order
-- Lower overhead
-- Works with file descriptors
+- chtag: Reliable file tag setting (F_SETTAG through Python's fcntl is unreliable)
 - Native z/OS API usage
 - Correct handling of z/OS-specific structures
 - Tested and verified on z/OS
@@ -372,41 +377,35 @@ file_ccsid = cvt_result.fccsid  # Get file CCSID
 
 **Status:** ✅ Fully working and tested on z/OS
 
-#### attrib_t Structure (for F_SETTAG)
+#### File Tag Setting (chtag command)
 
-Used to set file tag information:
+The package uses the `chtag` command for setting file tags, as F_SETTAG through Python's fcntl is unreliable:
 
-```c
-typedef struct attrib_t {
-    int att_filetagchg;           // File tag change flag (1=change)
-    int att_rsvd1;                // Reserved (0)
-    unsigned short att_txtflag;   // Text flag (1=text, 0=binary)
-    unsigned short att_ccsid;     // CCSID
-    int att_rsvd2[2];             // Reserved (0, 0)
-}
+```bash
+# Set text file tag
+chtag -t -c 1047 /path/to/file
+
+# Set binary file tag
+chtag -b /path/to/file
 ```
 
-Total size: 20 bytes (4+4+2+2+8)
-
+**Python usage:**
 ```python
-# Python ctypes definition with big-endian byte order
-class attrib_t(ctypes.BigEndianStructure):
-    _fields_ = [
-        ("att_filetagchg", ctypes.c_int32),      # 4 bytes
-        ("att_rsvd1", ctypes.c_int32),           # 4 bytes
-        ("att_txtflag", ctypes.c_uint16),        # 2 bytes
-        ("att_ccsid", ctypes.c_uint16),          # 2 bytes
-        ("att_rsvd2", ctypes.c_int32 * 2),       # 8 bytes
-    ]
+import subprocess
 
-# Usage example:
-tag = attrib_t()
-tag.att_filetagchg = 1
-tag.att_ccsid = 819  # ISO8859-1
-fcntl.fcntl(fd, F_SETTAG, bytes(tag))
+# Set text file to IBM-1047
+subprocess.run(['chtag', '-t', '-c', '1047', '/path/to/file'])
+
+# Set binary file
+subprocess.run(['chtag', '-b', '/path/to/file'])
 ```
 
-**Status:** ⚠️ May not be supported through Python's fcntl on all z/OS systems
+**Status:** ✅ Reliable and fully working on z/OS
+
+**Note:** F_SETTAG through Python's fcntl has known issues:
+- Always returns errno 121 (Invalid argument)
+- Fails to change tags when setting to a different CCSID
+- See `test_f_settag_issue.py` for detailed demonstration of the issue
 
 ## Requirements
 
