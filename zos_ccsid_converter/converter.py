@@ -181,6 +181,44 @@ def get_file_encoding_fcntl(path: str, fd: Optional[int] = None,
                 pass
 
 
+def _build_chtag_command(path: str, ccsid: int, text_flag: bool) -> list:
+    """Build chtag command based on file type."""
+    if text_flag:
+        return ['chtag', '-t', '-c', str(ccsid), path]
+    return ['chtag', '-b', path]
+
+
+def _log_chtag_execution(cmd: list, result, verbose: bool) -> None:
+    """Log chtag command execution details."""
+    if not verbose:
+        return
+    
+    print(f"  Running: {' '.join(cmd)}")
+    print(f"  Return code: {result.returncode}")
+    if result.stdout:
+        print(f"  stdout: {result.stdout}")
+    if result.stderr:
+        print(f"  stderr: {result.stderr}")
+
+
+def _verify_tag_set(path: str, ccsid: int, verbose: bool) -> bool:
+    """Verify that the file tag was set correctly."""
+    actual_encoding = get_file_encoding_fcntl(path, verbose=False)
+    expected_encoding = ENCODING_MAP.get(ccsid, f'CCSID-{ccsid}')
+    
+    if verbose:
+        print(f"  Verification: expected={expected_encoding}, actual={actual_encoding}")
+    
+    success = actual_encoding == expected_encoding
+    if verbose:
+        if success:
+            print(f"  Successfully set file CCSID to {ccsid}")
+        else:
+            print(f"  Tag verification failed: expected {expected_encoding}, got {actual_encoding}")
+    
+    return success
+
+
 def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
                       verbose: bool = False) -> bool:
     """
@@ -204,52 +242,17 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
             print(f"DEBUG: Setting file CCSID for {path} using chtag command")
             print(f"  Target CCSID={ccsid}, text_flag={text_flag}")
         
-        # Build chtag command
-        # chtag -t -c <ccsid> <file>  for text files
-        # chtag -b <file>              for binary files
-        if text_flag:
-            cmd = ['chtag', '-t', '-c', str(ccsid), path]
-        else:
-            cmd = ['chtag', '-b', path]
+        cmd = _build_chtag_command(path, ccsid, text_flag)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         
-        if verbose:
-            print(f"  Running: {' '.join(cmd)}")
+        _log_chtag_execution(cmd, result, verbose)
         
-        # Run chtag command
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False
-        )
-        
-        if verbose:
-            print(f"  Return code: {result.returncode}")
-            if result.stdout:
-                print(f"  stdout: {result.stdout}")
-            if result.stderr:
-                print(f"  stderr: {result.stderr}")
-        
-        if result.returncode == 0:
-            # Verify the tag was set
-            actual_encoding = get_file_encoding_fcntl(path, verbose=False)
-            expected_encoding = ENCODING_MAP.get(ccsid, f'CCSID-{ccsid}')
-            
-            if verbose:
-                print(f"  Verification: expected={expected_encoding}, actual={actual_encoding}")
-            
-            if actual_encoding == expected_encoding:
-                if verbose:
-                    print(f"  Successfully set file CCSID to {ccsid}")
-                return True
-            else:
-                if verbose:
-                    print(f"  Tag verification failed: expected {expected_encoding}, got {actual_encoding}")
-                return False
-        else:
+        if result.returncode != 0:
             if verbose:
                 print(f"  chtag command failed with return code {result.returncode}")
             return False
+        
+        return _verify_tag_set(path, ccsid, verbose)
         
     except Exception as e:
         if verbose:
@@ -297,7 +300,65 @@ def is_named_pipe(path: str) -> bool:
         return False
 
 
-def convert_to_ebcdic_fcntl(input_path: str, output_path: str, 
+def _log_verbose(message: str, verbose: bool) -> None:
+    """Helper to print verbose messages."""
+    if verbose:
+        print(message)
+
+
+def _convert_ascii_to_ebcdic(input_path: str, output_path: str, 
+                             verbose: bool) -> Dict[str, int]:
+    """
+    Convert ASCII file to EBCDIC.
+    
+    Returns dict with 'bytes_read' and 'bytes_written' keys.
+    """
+    _log_verbose("Converting from ISO8859-1 to IBM-1047...", verbose)
+    
+    with open(input_path, 'r', encoding='iso8859-1', errors='replace') as f_in:
+        content = f_in.read()
+        bytes_read = len(content.encode('iso8859-1', errors='replace'))
+    
+    with open(output_path, 'w', encoding='ibm1047', errors='replace') as f_out:
+        f_out.write(content)
+        bytes_written = len(content.encode('ibm1047', errors='replace'))
+    
+    return {'bytes_read': bytes_read, 'bytes_written': bytes_written}
+
+
+def _copy_binary_file(input_path: str, output_path: str, 
+                     verbose: bool) -> Dict[str, int]:
+    """
+    Copy file as binary without conversion.
+    
+    Returns dict with 'bytes_read' and 'bytes_written' keys.
+    """
+    _log_verbose("File is already EBCDIC (or untagged), copying as binary...", verbose)
+    
+    with open(input_path, 'rb') as f_in:
+        content = f_in.read()
+        bytes_count = len(content)
+    
+    with open(output_path, 'wb') as f_out:
+        f_out.write(content)
+    
+    return {'bytes_read': bytes_count, 'bytes_written': bytes_count}
+
+
+def _tag_output_file(output_path: str, encoding: str, verbose: bool) -> None:
+    """Tag output file as IBM-1047 if needed."""
+    should_tag = encoding in ('ISO8859-1', 'untagged')
+    if not should_tag:
+        return
+    
+    tag_success = set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose)
+    if tag_success:
+        _log_verbose("Tagged output file as IBM-1047", verbose)
+    elif encoding == 'ISO8859-1':
+        _log_verbose("Warning: Could not tag output file", verbose)
+
+
+def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
                            verbose: bool = False) -> Dict[str, Any]:
     """
     Convert input file to EBCDIC using fcntl-based encoding detection.
@@ -341,70 +402,77 @@ def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
         encoding = get_file_encoding_fcntl(input_path, verbose=verbose)
         stats['encoding_detected'] = encoding
         
-        if verbose:
-            print(f"Input file: {input_path}")
-            print(f"Detected encoding: {encoding}")
+        _log_verbose(f"Input file: {input_path}", verbose)
+        _log_verbose(f"Detected encoding: {encoding}", verbose)
         
-        # Determine if conversion is needed
-        # Untagged files are treated as IBM-1047 (already EBCDIC)
+        # Perform conversion or binary copy based on encoding
         if encoding == 'ISO8859-1':
             stats['conversion_needed'] = True
-            
-            if verbose:
-                print("Converting from ISO8859-1 to IBM-1047...")
-            
-            # Read as ASCII, write as EBCDIC
-            # Use 'replace' error handling to gracefully handle unconvertible chars
-            with open(input_path, 'r', encoding='iso8859-1', errors='replace') as f_in:
-                content = f_in.read()
-                stats['bytes_read'] = len(content.encode('iso8859-1', errors='replace'))
-            
-            with open(output_path, 'w', encoding='ibm1047', errors='replace') as f_out:
-                f_out.write(content)
-                stats['bytes_written'] = len(content.encode('ibm1047', errors='replace'))
-            
-            # Tag output file as IBM-1047 using fcntl
-            if set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose):
-                if verbose:
-                    print("Tagged output file as IBM-1047")
-            else:
-                if verbose:
-                    print("Warning: Could not tag output file")
-        
+            result = _convert_ascii_to_ebcdic(input_path, output_path, verbose)
         else:
-            # Already EBCDIC or untagged (treat as EBCDIC) - copy as binary
             stats['conversion_needed'] = False
-            
-            if verbose:
-                print("File is already EBCDIC (or untagged), copying as binary...")
-            
-            with open(input_path, 'rb') as f_in:
-                content = f_in.read()
-                stats['bytes_read'] = len(content)
-            
-            with open(output_path, 'wb') as f_out:
-                f_out.write(content)
-                stats['bytes_written'] = len(content)
-            
-            # Tag as IBM-1047 if untagged
-            if encoding == 'untagged':
-                if set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose):
-                    if verbose:
-                        print("Tagged output file as IBM-1047")
+            result = _copy_binary_file(input_path, output_path, verbose)
+        
+        stats['bytes_read'] = result['bytes_read']
+        stats['bytes_written'] = result['bytes_written']
+        
+        # Tag output file
+        _tag_output_file(output_path, encoding, verbose)
         
         stats['success'] = True
-        
-        if verbose:
-            print(f"Conversion complete: {stats['bytes_read']} bytes read, "
-                  f"{stats['bytes_written']} bytes written")
+        _log_verbose(
+            f"Conversion complete: {stats['bytes_read']} bytes read, "
+            f"{stats['bytes_written']} bytes written",
+            verbose
+        )
         
         return stats
         
     except Exception as e:
         stats['error_message'] = str(e)
-        if verbose:
-            print(f"ERROR: Conversion failed: {e}", file=sys.stderr)
+        _log_verbose(f"ERROR: Conversion failed: {e}", verbose)
         return stats
+
+
+def _convert_chunk_to_ebcdic(chunk: bytes, source_encoding: str,
+                             chunk_number: int, verbose: bool) -> Tuple[bytes, bool]:
+    """
+    Convert a single chunk from source encoding to EBCDIC.
+    
+    Args:
+        chunk: Bytes to convert
+        source_encoding: Source encoding name
+        chunk_number: Chunk number for error reporting
+        verbose: Enable verbose output
+    
+    Returns:
+        Tuple of (converted_bytes, had_error)
+    """
+    if source_encoding.lower() == 'ibm1047':
+        return chunk, False
+    
+    try:
+        text = chunk.decode(source_encoding, errors='replace')
+        converted = text.encode('ibm1047', errors='replace')
+        return converted, False
+    except Exception as e:
+        _log_verbose(f"Warning: Conversion error in chunk {chunk_number}: {e}", verbose)
+        return chunk, True
+
+
+def _log_stream_conversion_start(source_encoding: str, verbose: bool) -> None:
+    """Log stream conversion start message."""
+    _log_verbose(f"Converting stream from {source_encoding} to IBM-1047...", verbose)
+
+
+def _log_stream_conversion_complete(stats: Dict[str, Any], verbose: bool) -> None:
+    """Log stream conversion completion message."""
+    _log_verbose(
+        f"Stream conversion complete: {stats['bytes_read']} bytes read, "
+        f"{stats['bytes_written']} bytes written, "
+        f"{stats['chunks_processed']} chunks processed",
+        verbose
+    )
 
 
 def convert_stream_to_ebcdic(input_stream: BinaryIO, output_stream: BinaryIO,
@@ -437,11 +505,9 @@ def convert_stream_to_ebcdic(input_stream: BinaryIO, output_stream: BinaryIO,
     }
     
     try:
-        if verbose:
-            print(f"Converting stream from {source_encoding} to IBM-1047...")
+        _log_stream_conversion_start(source_encoding, verbose)
         
         while True:
-            # Read chunk
             chunk = input_stream.read(chunk_size)
             if not chunk:
                 break
@@ -449,40 +515,23 @@ def convert_stream_to_ebcdic(input_stream: BinaryIO, output_stream: BinaryIO,
             stats['bytes_read'] += len(chunk)
             stats['chunks_processed'] += 1
             
-            # Convert encoding if needed
-            if source_encoding.lower() != 'ibm1047':
-                try:
-                    # Decode from source encoding
-                    text = chunk.decode(source_encoding, errors='replace')
-                    # Encode to EBCDIC
-                    converted = text.encode('ibm1047', errors='replace')
-                except Exception as e:
-                    if verbose:
-                        print(f"Warning: Conversion error in chunk {stats['chunks_processed']}: {e}")
-                    stats['errors'] += 1
-                    # Use original chunk if conversion fails
-                    converted = chunk
-            else:
-                # Already EBCDIC, no conversion needed
-                converted = chunk
+            converted, had_error = _convert_chunk_to_ebcdic(
+                chunk, source_encoding, stats['chunks_processed'], verbose
+            )
             
-            # Write converted chunk
+            if had_error:
+                stats['errors'] += 1
+            
             output_stream.write(converted)
             stats['bytes_written'] += len(converted)
         
         stats['success'] = True
-        
-        if verbose:
-            print(f"Stream conversion complete: {stats['bytes_read']} bytes read, "
-                  f"{stats['bytes_written']} bytes written, "
-                  f"{stats['chunks_processed']} chunks processed")
-        
+        _log_stream_conversion_complete(stats, verbose)
         return stats
         
     except Exception as e:
         stats['error_message'] = str(e)
-        if verbose:
-            print(f"ERROR: Stream conversion failed: {e}", file=sys.stderr)
+        _log_verbose(f"ERROR: Stream conversion failed: {e}", verbose)
         return stats
 
 
