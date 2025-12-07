@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+export HOSTNAME="$(hostname -s)"
+
+CBSADIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 && pwd -P)"
+
+export CBSADIR
+
+# 
+# Need this to pull in a 'cob2' wrapper program called cobcc and
+# an ASCII-aware 'ld' wrapper program called ldc 
+#
+export PATH="${CBSADIR}/etc/install/base/uss_build/bin:${PATH}"
+
+source setenv
+rc=$?
+if [ $rc -gt 0 ]; then
+    exit $rc
+fi
+
+#
+# We specify the relative directory for the Makefile so that
+# errors that are generated will be relative to our root directory
+# and will appear correctly in the IDE.
+#
+gmake --makefile=etc/install/base/uss_build/Makefile db2-create-database
+rc=$?
+exit $rc

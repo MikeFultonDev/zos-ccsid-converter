@@ -1,0 +1,15 @@
+# Set up the environment for the build
+
+# This file needs to be SOURCEd
+# See if there is a host specific config file and source it.
+
+if [ "${CBSADIR}" = '' ] || ! [ -e "${CBSADIR}/setenv" ]; then
+  echo "CBSADIR has to be set by the script source'ing this file to the directory of this file." >&2
+else
+  export HOSTNAME="$(hostname -s)"
+
+  host_config="${CBSADIR}/${HOSTNAME}.cfg"
+  if [ -e "${host_config}" ]; then
+    source "${host_config}"
+  fi
+fi

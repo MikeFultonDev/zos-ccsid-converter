@@ -1,0 +1,14 @@
+{
+  "macros": [
+    {
+      "connectionName": "",
+      "connectionType": "zosmf",
+      "paths": []
+    }
+  ],
+
+  "buildSettings": {
+    "serverBuildTool": "/u/fultonm/grubServer/grub-main/bin/grub_server",
+    "remoteOefDir": "/usr/lpp/IBM/foz/v1r1/bin"
+    }
+}

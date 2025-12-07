@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include zos_ebcdic_converter *.py
+recursive-include tests *.py
+recursive-include examples *.py
