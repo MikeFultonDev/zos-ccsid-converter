@@ -786,13 +786,16 @@ class CodePageService:
             is_pipe = stat.S_ISFIFO(input_stat.st_mode)
             
             if is_pipe:
-                # For pipes, we must use stream conversion
+                # For pipes, source_encoding must be specified since pipes cannot be tagged
                 if source_encoding is None:
-                    # Default to ISO8859-1 for pipes since we can't detect encoding
+                    # Default to ISO8859-1 for pipes
+                    if self.verbose:
+                        print("Warning: No source_encoding specified for pipe, defaulting to ISO8859-1")
+                        print("Note: Pipes cannot be tagged on z/OS. Please specify source_encoding explicitly.")
                     source_encoding = 'ISO8859-1'
                 
                 # Get Python encoding name
-                source_py = PYTHON_ENCODING_MAP.get(source_encoding, 
+                source_py = PYTHON_ENCODING_MAP.get(source_encoding,
                                                     source_encoding.lower())
                 
                 # Open pipe and output file, then convert
