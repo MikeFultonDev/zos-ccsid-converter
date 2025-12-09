@@ -13,7 +13,7 @@ def read_file(filename):
 
 setup(
     name='zos-ccsid-converter',
-    version='0.1.5',
+    version='0.1.6',
     description='z/OS CCSID converter using fcntl for code page detection and conversion',
     long_description=read_file('README.md'),
     long_description_content_type='text/markdown',

@@ -2,7 +2,8 @@
 """
 Example usage of the CodePageService for importing into other code.
 
-This demonstrates how to use ebcdic_converter_fcntl as a service module.
+This demonstrates how to use zos_ccsid_converter as a service module,
+including support for files, named pipes (FIFOs), and byte streams.
 """
 
 # Import the service class and convenience functions
@@ -105,6 +106,88 @@ def example_4_convert_file():
         print(f"✗ Conversion failed: {stats['error_message']}")
     print()
 
+def example_4b_convert_pipe():
+    """Example 4b: Convert a named pipe (FIFO)"""
+    import os
+    import threading
+    import tempfile
+    
+    print("=" * 60)
+    print("Example 4b: Convert Named Pipe")
+    print("=" * 60)
+    
+    service = CodePageService(verbose=True)
+    
+    # Create a temporary named pipe
+    pipe_path = f"/tmp/example_pipe_{os.getpid()}.pipe"
+    output_path = f"/tmp/example_output_{os.getpid()}.txt"
+    
+    try:
+        # Create the named pipe (FIFO)
+        os.mkfifo(pipe_path)
+        print(f"Created named pipe: {pipe_path}")
+        
+        # Data to write to the pipe
+        test_data = "Hello from named pipe!\nThis is ISO8859-1 data.\nLine 3\n"
+        
+        # Function to write data to pipe in a separate thread
+        def write_to_pipe():
+            """Write data to the pipe"""
+            try:
+                with open(pipe_path, 'w', encoding='iso8859-1') as f:
+                    f.write(test_data)
+                print("  Data written to pipe")
+            except Exception as e:
+                print(f"  Error writing to pipe: {e}")
+        
+        # Start writer thread (daemon so it won't block if conversion fails)
+        writer_thread = threading.Thread(target=write_to_pipe, daemon=True)
+        writer_thread.start()
+        
+        # Convert named pipe to EBCDIC file
+        # The convert_input() method automatically detects pipes
+        print(f"Converting pipe to EBCDIC file...")
+        stats = service.convert_input(
+            pipe_path,
+            output_path,
+            source_encoding='ISO8859-1'  # Required for pipes (can't auto-detect)
+        )
+        
+        # Wait for writer thread to complete
+        writer_thread.join(timeout=5)
+        
+        if stats['success']:
+            print(f"✓ Conversion successful")
+            print(f"  Input type: {stats['input_type']}")
+            print(f"  Bytes read: {stats['bytes_read']}")
+            print(f"  Bytes written: {stats['bytes_written']}")
+            
+            # Verify the output
+            with open(output_path, 'r', encoding='ibm1047') as f:
+                output_content = f.read()
+            
+            if output_content == test_data:
+                print(f"  ✓ Content verified: matches original")
+            else:
+                print(f"  ✗ Content mismatch!")
+        else:
+            print(f"✗ Conversion failed: {stats['error_message']}")
+    
+    except Exception as e:
+        print(f"✗ Error: {e}")
+    
+    finally:
+        # Clean up
+        if os.path.exists(pipe_path):
+            os.unlink(pipe_path)
+            print(f"Cleaned up pipe: {pipe_path}")
+        if os.path.exists(output_path):
+            os.unlink(output_path)
+            print(f"Cleaned up output: {output_path}")
+    
+    print()
+
+
 
 def example_5_auto_detect_and_convert():
     """Example 5: Auto-detect encoding and convert"""
@@ -195,6 +278,7 @@ if __name__ == '__main__':
     # example_2_check_file_type()
     example_3_convert_bytes()
     # example_4_convert_file()
+    # example_4b_convert_pipe()  # Requires a named pipe at /tmp/mypipe
     # example_5_auto_detect_and_convert()
     # example_6_batch_processing()
     example_7_integration_with_existing_code()

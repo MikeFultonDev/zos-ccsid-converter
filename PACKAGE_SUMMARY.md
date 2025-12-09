@@ -88,7 +88,12 @@ if service.is_ascii('/path/to/file'):
 ebcdic_bytes = service.convert_to_ebcdic(b"Hello World")
 ascii_bytes = service.convert_to_ascii(ebcdic_bytes)
 
-# Convert files
+# Convert files or pipes (recommended)
+stats = service.convert_input('/input.txt', '/output.txt')
+if stats['success']:
+    print(f"Converted {stats['bytes_read']} bytes from {stats['input_type']}")
+
+# Also available: convert_file() for backward compatibility
 stats = service.convert_file('/input.txt', '/output.txt')
 if stats['success']:
     print(f"Converted {stats['bytes_read']} bytes")
@@ -128,7 +133,7 @@ python3 test_ebcdic_converter.py --verbose
 python3 test_ebcdic_converter.py --keep-files
 ```
 
-**Test Results:** All 10 tests pass on z/OS
+**Test Results:** All 11 tests pass on z/OS
 
 ## Key Features
 
@@ -152,9 +157,10 @@ python3 test_ebcdic_converter.py --keep-files
    - Comprehensive conversion statistics
 
 5. **Well Tested**
-   - 10 comprehensive tests covering:
+   - 11 comprehensive tests covering:
      - Regular files (ISO8859-1, IBM-1047, untagged)
-     - Named pipes (FIFOs)
+     - Named pipes via stream API
+     - Named pipes via CodePageService.convert_input()
      - Empty files
      - Special characters
      - Large files (~100KB)

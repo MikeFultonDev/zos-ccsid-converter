@@ -64,7 +64,10 @@ if service.is_ascii('/path/to/file'):
 ebcdic_bytes = service.convert_to_ebcdic(ascii_bytes)
 ascii_bytes = service.convert_to_ascii(ebcdic_bytes)
 
-# Convert files
+# Convert files or pipes
+stats = service.convert_input('/input.txt', '/output.txt')
+
+# Also available: convert_file() for backward compatibility
 stats = service.convert_file('/input.txt', '/output.txt')
 ```
 
@@ -74,11 +77,11 @@ stats = service.convert_file('/input.txt', '/output.txt')
 - Direct fcntl system calls for file tag detection (F_CONTROL_CVT with f_cnvrt structure)
 - Uses `chtag` command for reliable file tag setting
 - Uses Python ctypes.BigEndianStructure for proper z/OS big-endian byte order
-- Support for both regular files and streams/pipes
+- Support for regular files, named pipes (FIFOs), and streams
 - Graceful handling of unconvertible characters
 - Detailed conversion statistics
 - Minimal subprocess overhead (only for tag setting)
-- Tested and verified on z/OS with 10/10 tests passing
+- Tested and verified on z/OS with 11/11 tests passing
 
 ## API Reference
 
@@ -150,10 +153,25 @@ service = CodePageService(verbose=False)
 - Convert bytes to ASCII (ISO8859-1)
 - Example: `ascii = service.convert_to_ascii(ebcdic_data)`
 
+**`convert_input(input_path: str, output_path: str, source_encoding: Optional[str] = None, target_encoding: str = 'IBM-1047') -> Dict`**
+- Convert file or named pipe from one encoding to another
+- Automatically detects whether input is a regular file or named pipe (FIFO)
+- Auto-detects source encoding for files; defaults to ISO8859-1 for pipes
+- Returns dictionary with conversion statistics including 'input_type' field
+- Example:
+  ```python
+  # Works with both files and pipes
+  stats = service.convert_input('/input.txt', '/output.txt')
+  stats = service.convert_input('/tmp/mypipe', '/output.txt', source_encoding='ISO8859-1')
+  if stats['success']:
+      print(f"Converted {stats['bytes_read']} bytes from {stats['input_type']}")
+  ```
+
 **`convert_file(input_path: str, output_path: str, source_encoding: Optional[str] = None, target_encoding: str = 'IBM-1047') -> Dict`**
-- Convert entire file from one encoding to another
+- Convert regular file from one encoding to another
 - Auto-detects source encoding if not specified
 - Returns dictionary with conversion statistics
+- Note: Use `convert_input()` for unified file/pipe handling
 - Example:
   ```python
   stats = service.convert_file('/input.txt', '/output.txt')
@@ -274,8 +292,9 @@ python3 test_ebcdic_converter.py --keep-files
 - Empty file conversion
 - Special characters conversion
 - Large file conversion (~100KB)
-- ISO8859-1 pipe conversion
-- IBM-1047 pipe conversion
+- ISO8859-1 pipe conversion (stream API)
+- IBM-1047 pipe conversion (stream API)
+- CodePageService.convert_input() with ISO8859-1 pipe
 - File tag operations (get/set)
 - Error handling (nonexistent files)
 
@@ -518,8 +537,8 @@ Running error handling tests...
 ======================================================================
 TEST SUMMARY
 ======================================================================
-Total tests: 10
-Passed: 10
+Total tests: 11
+Passed: 11
 Failed: 0
 ======================================================================
 ```
@@ -589,9 +608,20 @@ If fcntl operations fail, the converter falls back to treating files as untagged
 - Insufficient permissions
 - File is on a non-z/OS file system
 
-### Pipe Conversion Issues
+### Pipe Conversion
 
-Named pipes (FIFOs) cannot be tagged with fcntl. Use `convert_stream_to_ebcdic()` for pipes and tag the output file after conversion.
+Named pipes (FIFOs) cannot be tagged with fcntl. The `convert_input()` method automatically detects pipes and uses the appropriate stream conversion method, then tags the output file. For direct stream access, use `convert_stream_to_ebcdic()`.
+
+Example:
+```python
+# Automatic pipe detection and conversion
+stats = service.convert_input('/tmp/mypipe', '/output.txt', source_encoding='ISO8859-1')
+
+# Or use stream API directly
+with open('/tmp/mypipe', 'rb') as pipe_in:
+    with open('/output.txt', 'wb') as file_out:
+        stats = convert_stream_to_ebcdic(pipe_in, file_out, source_encoding='iso8859-1')
+```
 
 ### Character Conversion Errors
 

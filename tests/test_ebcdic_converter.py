@@ -513,6 +513,67 @@ def test_ibm1047_pipe_conversion(env: TestEnvironment, results: TestResults):
     except Exception as e:
         results.add_fail(test_name, f"Exception: {e}")
 
+def test_convert_input_with_iso8859_pipe(env: TestEnvironment, results: TestResults):
+    """Test CodePageService.convert_input() with ISO8859-1 pipe"""
+    test_name = "CodePageService.convert_input() with ISO8859-1 pipe"
+    
+    try:
+        content = "Data from ISO8859-1 pipe via convert_input\nLine 2\nLine 3\n"
+        
+        pipe_path = env.create_named_pipe('convert_input_iso8859_pipe')
+        output_file = os.path.join(env.temp_dir, 'convert_input_pipe_output.txt')
+        
+        # Create service instance
+        service = converter.CodePageService(verbose=env.verbose)
+        
+        # Start writer thread
+        writer_thread = threading.Thread(
+            target=pipe_writer,
+            args=(pipe_path, content, 'iso8859-1', 0.1)
+        )
+        writer_thread.start()
+        
+        # Use convert_input to read from pipe and convert
+        stats = service.convert_input(pipe_path, output_file,
+                                     source_encoding='ISO8859-1')
+        
+        writer_thread.join(timeout=5.0)
+        
+        # Verify
+        if not stats['success']:
+            results.add_fail(test_name, f"Conversion failed: {stats['error_message']}")
+            return
+        
+        if stats['bytes_read'] == 0:
+            results.add_fail(test_name, "No data read from pipe")
+            return
+        
+        if stats.get('input_type') != 'pipe':
+            results.add_fail(test_name, f"Should detect as pipe: {stats.get('input_type')}")
+            return
+        
+        # Verify content
+        with open(output_file, 'r', encoding='ibm1047') as f:
+            output_content = f.read()
+        
+        if output_content != content:
+            results.add_fail(test_name, "Content mismatch from pipe")
+            return
+        
+        # Verify output file is tagged as IBM-1047
+        output_encoding = converter.get_file_encoding_fcntl(output_file,
+                                                            verbose=env.verbose)
+        if output_encoding != 'IBM-1047':
+            results.add_fail(test_name,
+                           f"Output not tagged as IBM-1047: {output_encoding}")
+            return
+        
+        results.add_pass(test_name)
+        
+    except Exception as e:
+        results.add_fail(test_name, f"Exception: {e}")
+
+
 
 def test_large_file_conversion(env: TestEnvironment, results: TestResults):
     """Test conversion of larger file"""
@@ -673,6 +734,9 @@ def main():
         print("\nRunning pipe conversion tests...")
         test_iso8859_pipe_conversion(env, results)
         test_ibm1047_pipe_conversion(env, results)
+        
+        print("\nRunning CodePageService.convert_input() tests...")
+        test_convert_input_with_iso8859_pipe(env, results)
         
         print("\nRunning file tag operation tests...")
         test_file_tag_operations(env, results)

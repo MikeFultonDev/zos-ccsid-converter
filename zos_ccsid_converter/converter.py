@@ -27,8 +27,10 @@ Key features:
 - Reliable file tag detection via F_CONTROL_CVT
 - Reliable file tag setting via chtag command
 - Better error handling for unconvertible characters
-- Support for both files and streams/pipes
-- Tested and verified on z/OS
+- Support for regular files, named pipes (FIFOs), and streams
+- Automatic pipe detection via stat.S_ISFIFO()
+- Unified convert_input() API for files and pipes
+- Tested and verified on z/OS (11/11 tests passing)
 
 Note: F_SETTAG through Python's fcntl is unreliable (see test_f_settag_issue.py).
       The chtag command is used instead for setting file tags.
@@ -547,10 +549,10 @@ class CodePageService:
     This class provides a clean API for other code to:
     - Detect the code page (CCSID) of files
     - Convert data between code pages
-    - Handle both files and byte streams
+    - Handle files, named pipes (FIFOs), and byte streams
     
     Example usage:
-        from ebcdic_converter_fcntl import CodePageService
+        from zos_ccsid_converter import CodePageService
         
         service = CodePageService()
         
@@ -562,9 +564,13 @@ class CodePageService:
         ebcdic_bytes = service.convert_to_ebcdic(ascii_bytes)
         ascii_bytes = service.convert_to_ascii(ebcdic_bytes)
         
-        # Convert files
-        service.convert_file('/input.txt', '/output.txt', 
-                           source_encoding='ISO8859-1', 
+        # Convert files or pipes (automatic detection)
+        service.convert_input('/input.txt', '/output.txt')
+        service.convert_input('/tmp/mypipe', '/output.txt', source_encoding='ISO8859-1')
+        
+        # Convert files only (backward compatibility)
+        service.convert_file('/input.txt', '/output.txt',
+                           source_encoding='ISO8859-1',
                            target_encoding='IBM-1047')
     """
     
@@ -745,6 +751,88 @@ class CodePageService:
                 'bytes_read': 0,
                 'bytes_written': 0
             }
+    def convert_input(self, input_path: str, output_path: str,
+                     source_encoding: Optional[str] = None,
+                     target_encoding: str = 'IBM-1047') -> Dict[str, Any]:
+        """
+        Convert an input (file or pipe) from one encoding to another.
+        
+        This method automatically detects whether the input is a regular file
+        or a named pipe (FIFO) and uses the appropriate conversion method.
+        
+        Args:
+            input_path: Input file or pipe path
+            output_path: Output file path
+            source_encoding: Source encoding (auto-detected for files, required for pipes)
+            target_encoding: Target encoding (default: 'IBM-1047')
+            
+        Returns:
+            Dictionary with conversion statistics
+            
+        Example:
+            # Convert a file
+            stats = service.convert_input('/input.txt', '/output.txt')
+            
+            # Convert a named pipe
+            stats = service.convert_input('/tmp/mypipe', '/output.txt',
+                                         source_encoding='ISO8859-1')
+            
+            if stats['success']:
+                print(f"Converted {stats['bytes_read']} bytes")
+        """
+        try:
+            # Check if input is a named pipe (FIFO)
+            input_stat = os.stat(input_path)
+            is_pipe = stat.S_ISFIFO(input_stat.st_mode)
+            
+            if is_pipe:
+                # For pipes, we must use stream conversion
+                if source_encoding is None:
+                    # Default to ISO8859-1 for pipes since we can't detect encoding
+                    source_encoding = 'ISO8859-1'
+                
+                # Get Python encoding name
+                source_py = PYTHON_ENCODING_MAP.get(source_encoding, 
+                                                    source_encoding.lower())
+                
+                # Open pipe and output file, then convert
+                with open(input_path, 'rb') as pipe_in:
+                    with open(output_path, 'wb') as file_out:
+                        stats = convert_stream_to_ebcdic(
+                            pipe_in, file_out,
+                            source_encoding=source_py,
+                            verbose=self.verbose
+                        )
+                
+                # Tag the output file
+                if stats['success'] and target_encoding == 'IBM-1047':
+                    set_file_tag_fcntl(output_path, CCSID_IBM1047, 
+                                      verbose=self.verbose)
+                
+                # Add encoding info to stats
+                stats['encoding_detected'] = source_encoding
+                stats['target_encoding'] = target_encoding
+                stats['conversion_needed'] = source_encoding != target_encoding
+                stats['input_type'] = 'pipe'
+                
+                return stats
+            else:
+                # For regular files, use the file conversion method
+                stats = self.convert_file(input_path, output_path,
+                                        source_encoding=source_encoding,
+                                        target_encoding=target_encoding)
+                stats['input_type'] = 'file'
+                return stats
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error_message': str(e),
+                'bytes_read': 0,
+                'bytes_written': 0,
+                'input_type': 'unknown'
+            }
+
 
 
 # Convenience functions for direct import
