@@ -574,6 +574,92 @@ def test_convert_input_with_iso8859_pipe(env: TestEnvironment, results: TestResu
         results.add_fail(test_name, f"Exception: {e}")
 
 
+def test_convert_input_with_ibm1047_pipe(env: TestEnvironment, results: TestResults):
+    """Test CodePageService.convert_input() with IBM-1047 pipe (EBCDIC input)
+    
+    This test reproduces the issue where convert_input() fails to properly handle
+    named pipes containing data already encoded in EBCDIC (IBM-1047).
+    
+    Expected behavior: When source_encoding='IBM-1047' is specified, the data
+    should be copied as-is without conversion since source and target match.
+    
+    Actual behavior (bug): The method may attempt conversion on already-converted
+    data, resulting in garbled output.
+    """
+    test_name = "CodePageService.convert_input() with IBM-1047 pipe"
+    
+    try:
+        content = "alloc da(temp.batchtso.dataset) new\n"
+        
+        pipe_path = env.create_named_pipe('convert_input_ibm1047_pipe')
+        output_file = os.path.join(env.temp_dir, 'convert_input_ibm1047_output.txt')
+        
+        # Create service instance
+        service = converter.CodePageService(verbose=env.verbose)
+        
+        # Start writer thread - writing EBCDIC data to the pipe
+        writer_thread = threading.Thread(
+            target=pipe_writer,
+            args=(pipe_path, content, 'ibm1047', 0.1)
+        )
+        writer_thread.start()
+        
+        # Use convert_input to read from pipe with IBM-1047 source encoding
+        # This should recognize that source and target are the same and copy as-is
+        stats = service.convert_input(pipe_path, output_file,
+                                     source_encoding='IBM-1047',
+                                     target_encoding='IBM-1047')
+        
+        writer_thread.join(timeout=5.0)
+        
+        # Verify conversion succeeded
+        if not stats['success']:
+            results.add_fail(test_name, f"Conversion failed: {stats['error_message']}")
+            return
+        
+        if stats['bytes_read'] == 0:
+            results.add_fail(test_name, "No data read from pipe")
+            return
+        
+        if stats.get('input_type') != 'pipe':
+            results.add_fail(test_name, f"Should detect as pipe: {stats.get('input_type')}")
+            return
+        
+        # Verify content is correct (not garbled)
+        with open(output_file, 'r', encoding='ibm1047') as f:
+            output_content = f.read()
+        
+        if output_content != content:
+            results.add_fail(test_name, 
+                           f"Content mismatch - data was corrupted!\n"
+                           f"Expected: {repr(content)}\n"
+                           f"Got: {repr(output_content)}\n"
+                           f"This indicates the EBCDIC data was incorrectly converted.")
+            return
+        
+        # Verify output file is tagged as IBM-1047
+        output_encoding = converter.get_file_encoding_fcntl(output_file,
+                                                            verbose=env.verbose)
+        if output_encoding != 'IBM-1047':
+            results.add_fail(test_name,
+                           f"Output not tagged as IBM-1047: {output_encoding}")
+            return
+        
+        # Verify no conversion was needed (source and target are the same)
+        if stats.get('conversion_needed', True):
+            results.add_fail(test_name,
+                           "Conversion should not be needed when source=target=IBM-1047")
+            return
+        
+        results.add_pass(test_name)
+        
+    except Exception as e:
+        results.add_fail(test_name, f"Exception: {e}")
+        if env.verbose:
+            import traceback
+            traceback.print_exc()
+
+
 
 def test_large_file_conversion(env: TestEnvironment, results: TestResults):
     """Test conversion of larger file"""
@@ -737,6 +823,7 @@ def main():
         
         print("\nRunning CodePageService.convert_input() tests...")
         test_convert_input_with_iso8859_pipe(env, results)
+        test_convert_input_with_ibm1047_pipe(env, results)
         
         print("\nRunning file tag operation tests...")
         test_file_tag_operations(env, results)

@@ -29,7 +29,7 @@ from .converter import (
     PYTHON_ENCODING_MAP,
 )
 
-__version__ = '0.1.6'
+__version__ = '0.1.7'
 __author__ = 'Mike Fulton'
 __all__ = [
     'CodePageService',
