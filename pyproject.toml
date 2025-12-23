@@ -26,6 +26,9 @@ classifiers = [
     "Environment :: Console",
 ]
 
+[project.optional-dependencies]
+zos = ["zos-util>=1.0.0"]
+
 [project.urls]
 Homepage = "https://github.com/MikeFultonDev/zos-ccsid-converter"
 Repository = "https://github.com/MikeFultonDev/zos-ccsid-converter"

@@ -15,7 +15,46 @@ import tempfile
 import time
 from zos_ccsid_converter import CodePageService
 
-def test_developer_pattern_text_mode():
+
+class TestResults:
+    """Track test results"""
+    
+    def __init__(self):
+        self.total = 0
+        self.passed = 0
+        self.failed = 0
+        self.errors = []
+    
+    def add_pass(self, test_name: str):
+        self.total += 1
+        self.passed += 1
+        print(f"✓ PASS: {test_name}")
+    
+    def add_fail(self, test_name: str, reason: str):
+        self.total += 1
+        self.failed += 1
+        self.errors.append((test_name, reason))
+        print(f"✗ FAIL: {test_name}")
+        print(f"  Reason: {reason}")
+    
+    def print_summary(self):
+        print("\n" + "="*70)
+        print("TEST SUMMARY")
+        print("="*70)
+        print(f"Total tests: {self.total}")
+        print(f"Passed: {self.passed}")
+        print(f"Failed: {self.failed}")
+        
+        if self.errors:
+            print("\nFailed tests:")
+            for test_name, reason in self.errors:
+                print(f"  - {test_name}: {reason}")
+        
+        print("="*70)
+        
+        return self.failed == 0
+
+def test_developer_pattern_text_mode(results: TestResults):
     """
     Reproduce the developer's exact pattern:
     - Write to pipe in TEXT mode with encoding='ibm1047'
@@ -23,9 +62,7 @@ def test_developer_pattern_text_mode():
     
     This will fail because convert_stream_to_ebcdic expects binary streams.
     """
-    print("=" * 70)
-    print("Test: Developer's Pattern (Text Mode Writing)")
-    print("=" * 70)
+    test_name = "Developer's pattern (text mode writing)"
     
     pipe_path = f"/tmp/test_dev_pattern_{os.getpid()}.pipe"
     output_path = f"/tmp/test_dev_output_{os.getpid()}.txt"
@@ -33,7 +70,6 @@ def test_developer_pattern_text_mode():
     try:
         # Create named pipe
         os.mkfifo(pipe_path)
-        print(f"Created pipe: {pipe_path}")
         
         content = "alloc da(temp.batchtso.dataset) new\n"
         
@@ -44,17 +80,15 @@ def test_developer_pattern_text_mode():
                 # THIS IS THE PROBLEM: Writing in text mode
                 with open(pipe_path, 'w', encoding='ibm1047') as f:
                     f.write(content)
-                print("  Wrote to pipe in TEXT mode with encoding='ibm1047'")
             except Exception as e:
-                print(f"  Write error: {e}")
+                pass  # Errors handled in main test
         
         writer = threading.Thread(target=write_pipe_text_mode, daemon=True)
         writer.start()
         
         # Try to use CodePageService.convert_input()
-        service = CodePageService(verbose=True)
+        service = CodePageService(verbose=False)
         
-        print("\nAttempting conversion with source_encoding='IBM-1047'...")
         stats = service.convert_input(
             pipe_path,
             output_path,
@@ -64,42 +98,31 @@ def test_developer_pattern_text_mode():
         
         writer.join(timeout=5)
         
-        if stats['success']:
-            print(f"\n✓ Conversion succeeded")
-            print(f"  Bytes read: {stats['bytes_read']}")
-            print(f"  Bytes written: {stats['bytes_written']}")
-            
-            # Verify content
-            with open(output_path, 'r', encoding='ibm1047') as f:
-                output_content = f.read()
-            
-            print(f"\nOriginal: {repr(content)}")
-            print(f"Output:   {repr(output_content)}")
-            
-            if output_content == content:
-                print("✓ Content matches!")
-            else:
-                print("✗ Content MISMATCH - data was corrupted!")
-                print(f"  Expected bytes: {content.encode('ibm1047').hex()}")
-                print(f"  Got bytes:      {output_content.encode('ibm1047').hex()}")
-        else:
-            print(f"\n✗ Conversion failed: {stats.get('error_message')}")
+        if not stats['success']:
+            results.add_fail(test_name, f"Conversion failed: {stats.get('error_message')}")
+            return
+        
+        # Verify content
+        with open(output_path, 'r', encoding='ibm1047') as f:
+            output_content = f.read()
+        
+        if output_content != content:
+            results.add_fail(test_name, "Content mismatch - data was corrupted by double encoding")
+            return
+        
+        results.add_pass(test_name)
         
     except Exception as e:
-        print(f"\n✗ Exception: {e}")
-        import traceback
-        traceback.print_exc()
+        results.add_fail(test_name, f"Exception: {e}")
     
     finally:
         # Cleanup
         for path in [pipe_path, output_path]:
             if os.path.exists(path):
                 os.unlink(path)
-    
-    print()
 
 
-def test_correct_pattern_binary_mode():
+def test_correct_pattern_binary_mode(results: TestResults):
     """
     Demonstrate the CORRECT pattern:
     - Write to pipe in BINARY mode
@@ -107,9 +130,7 @@ def test_correct_pattern_binary_mode():
     
     This should work correctly.
     """
-    print("=" * 70)
-    print("Test: Correct Pattern (Binary Mode Writing)")
-    print("=" * 70)
+    test_name = "Correct pattern (binary mode writing)"
     
     pipe_path = f"/tmp/test_correct_pattern_{os.getpid()}.pipe"
     output_path = f"/tmp/test_correct_output_{os.getpid()}.txt"
@@ -117,7 +138,6 @@ def test_correct_pattern_binary_mode():
     try:
         # Create named pipe
         os.mkfifo(pipe_path)
-        print(f"Created pipe: {pipe_path}")
         
         content = "alloc da(temp.batchtso.dataset) new\n"
         
@@ -128,17 +148,15 @@ def test_correct_pattern_binary_mode():
                 with open(pipe_path, 'wb') as f:
                     # Encode to EBCDIC bytes before writing
                     f.write(content.encode('ibm1047'))
-                print("  Wrote to pipe in BINARY mode (pre-encoded to EBCDIC)")
             except Exception as e:
-                print(f"  Write error: {e}")
+                pass  # Errors handled in main test
         
         writer = threading.Thread(target=write_pipe_binary_mode, daemon=True)
         writer.start()
         
         # Use CodePageService.convert_input()
-        service = CodePageService(verbose=True)
+        service = CodePageService(verbose=False)
         
-        print("\nAttempting conversion with source_encoding='IBM-1047'...")
         stats = service.convert_input(
             pipe_path,
             output_path,
@@ -148,67 +166,70 @@ def test_correct_pattern_binary_mode():
         
         writer.join(timeout=5)
         
-        if stats['success']:
-            print(f"\n✓ Conversion succeeded")
-            print(f"  Bytes read: {stats['bytes_read']}")
-            print(f"  Bytes written: {stats['bytes_written']}")
-            
-            # Verify content
-            with open(output_path, 'r', encoding='ibm1047') as f:
-                output_content = f.read()
-            
-            print(f"\nOriginal: {repr(content)}")
-            print(f"Output:   {repr(output_content)}")
-            
-            if output_content == content:
-                print("✓ Content matches!")
-            else:
-                print("✗ Content MISMATCH!")
-        else:
-            print(f"\n✗ Conversion failed: {stats.get('error_message')}")
+        if not stats['success']:
+            results.add_fail(test_name, f"Conversion failed: {stats.get('error_message')}")
+            return
+        
+        # Verify content
+        with open(output_path, 'r', encoding='ibm1047') as f:
+            output_content = f.read()
+        
+        if output_content != content:
+            results.add_fail(test_name, "Content mismatch")
+            return
+        
+        results.add_pass(test_name)
         
     except Exception as e:
-        print(f"\n✗ Exception: {e}")
-        import traceback
-        traceback.print_exc()
+        results.add_fail(test_name, f"Exception: {e}")
     
     finally:
         # Cleanup
         for path in [pipe_path, output_path]:
             if os.path.exists(path):
                 os.unlink(path)
+
+
+def main():
+    """Run all tests"""
+    import argparse
     
+    parser = argparse.ArgumentParser(
+        description='Test developer usage patterns with pipes',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Enable verbose output')
+    parser.add_argument('--keep-files', action='store_true',
+                       help='Keep test files after completion (not used in this test)')
+    
+    args = parser.parse_args()
+    
+    print("="*70)
+    print("Developer Usage Pattern Tests")
+    print("Testing: Pipe writing patterns (text vs binary mode)")
+    print("="*70)
     print()
+    
+    results = TestResults()
+    
+    try:
+        print("Running pipe usage pattern tests...")
+        test_developer_pattern_text_mode(results)
+        test_correct_pattern_binary_mode(results)
+        
+    except KeyboardInterrupt:
+        print("\n\nTests interrupted by user")
+        return 1
+    
+    # Print summary
+    success = results.print_summary()
+    
+    return 0 if success else 1
 
 
 if __name__ == '__main__':
-    print("\n" + "=" * 70)
-    print("Testing Developer's Usage Pattern vs Correct Pattern")
-    print("=" * 70 + "\n")
-    
-    test_developer_pattern_text_mode()
-    test_correct_pattern_binary_mode()
-    
-    print("=" * 70)
-    print("DIAGNOSIS:")
-    print("=" * 70)
-    print("""
-The issue is that the developer is writing to named pipes in TEXT mode
-with encoding, but CodePageService.convert_input() expects BINARY data.
-
-PROBLEM in batchtsocmd test (lines 87-92):
-    with open(pipe_path, 'w', encoding=encoding) as f:  # TEXT MODE
-        f.write(content)
-
-SOLUTION:
-The developer should write to pipes in BINARY mode:
-    with open(pipe_path, 'wb') as f:  # BINARY MODE
-        f.write(content.encode(encoding))
-
-When writing in text mode with encoding='ibm1047', Python performs
-encoding internally, but then our service tries to read it as binary
-and decode it again, causing double-encoding issues.
-""")
-    print("=" * 70)
+    sys.exit(main())
 
 # Made with Bob

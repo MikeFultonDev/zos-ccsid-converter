@@ -2,166 +2,58 @@
 """
 converter.py - EBCDIC conversion using z/OS file tagging
 
-This module provides EBCDIC conversion functionality using z/OS-specific
-methods for file tagging.
+This module provides EBCDIC conversion functionality using IBM's zos-util
+C extension module exclusively for all file tag operations.
 
-Based on IBM z/OS documentation and IBM zos-util implementation:
-- https://www.ibm.com/docs/en/zos/3.2.0?topic=SSLTBW_3.2.0/com.ibm.zos.v3r2.bpxbd00/rtfcndesc.html
-- https://github.com/IBM/zos-util (reference implementation)
+Based on IBM zos-util implementation:
+- https://github.com/IBM/zos-util
 
 Implementation Details:
-- Primary: Uses os.stat() to access st_tag structure (similar to IBM zos-util)
-- Fallback: Uses F_CONTROL_CVT (13) with f_cnvrt structure for file descriptor queries
-- Uses chtag command for reliable file tag setting
-- Implements ctypes structures for proper z/OS data access
-
-Structures:
-  struct ft_tag {
-      unsigned short ft_ccsid;    // File CCSID
-      unsigned int   ft_txtflag;  // Text flag (1=text, 0=binary)
-  }
-  
-  struct f_cnvrt {
-      int cvtcmd;      // Command: 3=query
-      short pccsid;    // Process CCSID
-      short fccsid;    // File CCSID (output)
-  }
+- Query Method: Uses zos_util.get_tag_info() exclusively (returns ccsid, txtflag tuple)
+- Setting Method: Uses zos_util.chtag() exclusively
+- Hard Requirement: zos-util is required on z/OS (automatically installed by build process)
+- No ctypes or fcntl fallbacks needed
 
 Key features:
-- Efficient stat-based file tag detection (similar to IBM zos-util)
-- Fallback to fcntl for file descriptor-based queries
-- Uses ctypes.BigEndianStructure for correct z/OS byte order
-- Reliable file tag setting via chtag command
+- Uses zos_util for ALL file tag operations (query and setting)
+- No ctypes structures or fcntl code needed
+- Supports regular files, named pipes, and special files (/dev/stdin)
 - Better error handling for unconvertible characters
-- Support for regular files, named pipes (FIFOs), and streams
 - Automatic pipe detection via stat.S_ISFIFO()
 - Unified convert_input() API for files and pipes
-- Tested and verified on z/OS (11/11 tests passing)
+- Tested and verified on z/OS
 
-Note: F_SETTAG through Python's fcntl is unreliable (see test_f_settag_issue.py).
-      The chtag command is used instead for setting file tags.
+Note: IBM's zos-util C extension module is REQUIRED on z/OS.
+      The build process automatically installs zos-util if not present.
+      zos-util handles all file types including named pipes and special files.
 """
 
 import os
 import sys
-import fcntl
-import struct
-import ctypes
 import stat
-import subprocess
 from typing import Optional, Dict, Tuple, BinaryIO, Any
 
-# z/OS file_tag structure
-# From z/OS sys/stat.h - verified against actual header
-class file_tag(ctypes.Structure):
-    """
-    z/OS file_tag structure (part of stat structure and attrib_t).
-    
-    struct file_tag {
-        unsigned short ft_ccsid;       // Character Set Id
-        unsigned int   ft_txtflag :1;  // Pure Text Flag
-        unsigned int   ft_deferred:1;  // Defer Until 1st Write
-        unsigned int   ft_rsvflags:14; // Reserved Flags
-    }
-    
-    ctypes supports bit fields directly, matching the C structure exactly.
-    """
-    _fields_ = [
-        ("ft_ccsid", ctypes.c_ushort),      # 2 bytes: Character Set ID
-        ("ft_txtflag", ctypes.c_uint, 1),   # 1 bit: Pure Text Flag
-        ("ft_deferred", ctypes.c_uint, 1),  # 1 bit: Defer Until 1st Write
-        ("ft_rsvflags", ctypes.c_uint, 14), # 14 bits: Reserved Flags
-    ]
-
-
-# z/OS attrib_t structure for chattr() system call
-# Based on z/OS sys/stat.h definition
-class attrib_t(ctypes.Structure):
-    """
-    z/OS attrib_t structure for __chattr() system call.
-    
-    This is a simplified version containing only the fields needed for
-    file tag operations. The full structure has many more fields.
-    
-    Key fields for file tagging:
-    - att_filetagchg: Set to 1 to change file tag
-    - att_filetag: The file tag structure (ccsid + txtflag)
-    """
-    _fields_ = [
-        ("att_id", ctypes.c_char * 4),           # Eye-catcher "ATT "
-        ("att_version", ctypes.c_short),         # Version
-        ("att_res01", ctypes.c_char * 2),        # Reserved
-        ("att_flags", ctypes.c_uint32),          # Flags (includes att_filetagchg)
-        ("att_mode", ctypes.c_uint),             # File mode
-        ("att_uid", ctypes.c_int),               # User ID
-        ("att_gid", ctypes.c_int),               # Group ID
-        ("att_opaquemask", ctypes.c_uint32),     # Opaque mask
-        ("att_opaque", ctypes.c_uint32),         # Opaque flags
-        ("att_size_h", ctypes.c_int),            # Size high word (32-bit)
-        ("att_size", ctypes.c_long),             # Size
-        ("att_atime", ctypes.c_long),            # Access time
-        ("att_mtime", ctypes.c_long),            # Modification time
-        ("att_auditoraudit", ctypes.c_int),      # Auditor audit
-        ("att_useraudit", ctypes.c_int),         # User audit
-        ("att_ctime", ctypes.c_long),            # Status change time
-        ("att_reftime", ctypes.c_long),          # Reference time
-        ("att_filefmt", ctypes.c_char),          # File format
-        ("att_res02", ctypes.c_char * 3),        # Reserved
-        ("att_filetag", file_tag),               # File tag structure
-        ("att_res03", ctypes.c_char * 8),        # Reserved
-    ]
-    
-    def __init__(self):
-        super().__init__()
-        # Initialize eye-catcher
-        self.att_id = b"ATT "
-        self.att_version = 2  # Current version
-
-
-# Load libc for chattr system call
+# Import zos_util for native z/OS file tagging support
+# This is REQUIRED on z/OS systems
 try:
-    libc = ctypes.CDLL("libc.so")
-    # Define __chattr function signature
-    # int __chattr(const char *path, attrib_t *attr, size_t size)
-    libc.__chattr.argtypes = [ctypes.c_char_p, ctypes.POINTER(attrib_t), ctypes.c_size_t]
-    libc.__chattr.restype = ctypes.c_int
-    CHATTR_AVAILABLE = True
-except (OSError, AttributeError):
-    # Not on z/OS or __chattr not available
-    CHATTR_AVAILABLE = False
-    libc = None
-
-
-# z/OS fcntl constants for file tagging
-# From sys/fcntl.h on z/OS
-# Based on actual z/OS header file values
-F_SETTAG = 12       # Set file tag information
-F_CONTROL_CVT = 13  # Control conversion
-# Note: There is no F_GETTAG in z/OS. Use F_CONTROL_CVT with f_cnvrt structure
-# to query file conversion information (which includes CCSID)
-# Define f_cnvrt structure using ctypes for fcntl operations
-# z/OS is big-endian, ctypes uses native byte order which is correct
-class f_cnvrt(ctypes.BigEndianStructure):
-    """
-    z/OS f_cnvrt structure for F_CONTROL_CVT operations.
-    
-    struct f_cnvrt {
-        int cvtcmd;      // Command: 2=set, 3=query
-        short pccsid;    // Process CCSID
-        short fccsid;    // File CCSID
-    }
-    
-    Commands:
-    - 2: Set file CCSID (fccsid) and process CCSID (pccsid)
-    - 3: Query file CCSID
-    
-    Note: Using BigEndianStructure to explicitly specify z/OS byte order.
-    """
-    _fields_ = [
-        ("cvtcmd", ctypes.c_int32),   # 4 bytes
-        ("pccsid", ctypes.c_int16),   # 2 bytes
-        ("fccsid", ctypes.c_int16),   # 2 bytes
-    ]  # Total: 8 bytes
+    import zos_util
+    ZOS_UTIL_AVAILABLE = True
+except ImportError as e:
+    # Check if we're on z/OS
+    import platform
+    if platform.system().lower() == 'os/390' or sys.platform == 'zos':
+        raise ImportError(
+            "zos_util module is required on z/OS but not found. "
+            "Please install it:\n"
+            "  git clone https://github.com/IBM/zos-util.git\n"
+            "  cd zos-util && python3 setup.py install --user\n"
+            "Or use the Makefile:\n"
+            "  make install-zos-util\n"
+            f"Original error: {e}"
+        ) from e
+    # Not on z/OS, so zos_util is optional
+    ZOS_UTIL_AVAILABLE = False
+    zos_util = None  # type: ignore
 
 
 # CCSID (Coded Character Set ID) mappings
@@ -196,158 +88,54 @@ class FileTagInfo:
         return f"FileTagInfo(ccsid={self.ccsid}, text={self.text_flag}, encoding={self.encoding_name})"
 
 
-def get_file_tag_stat(path: str, verbose: bool = False) -> Optional[Tuple[int, int]]:
+def get_file_encoding_fcntl(path: str, verbose: bool = False) -> str:
     """
-    Get file tag information using os.stat() - z/OS specific.
+    Get file encoding using zos_util.
     
-    This function uses the stat() system call to access the st_tag structure,
-    similar to IBM's zos-util implementation. This is more efficient than
-    using fcntl or subprocess calls.
-    
-    On z/OS, the stat structure includes:
-        struct stat {
-            ...
-            struct {
-                unsigned short ft_ccsid;    // File CCSID
-                unsigned int   ft_txtflag;  // Text flag
-            } st_tag;
-        }
+    This function uses zos_util.get_tag_info() which supports regular files,
+    named pipes, and special files like /dev/stdin.
     
     Args:
-        path: File path
-        verbose: Enable verbose output
-    
-    Returns:
-        Tuple of (ccsid, txtflag) or None if not on z/OS or error
-        
-    Note: This only works on z/OS. On other platforms, returns None.
-    """
-    try:
-        # Use os.stat to get file information
-        st = os.stat(path)
-        
-        # On z/OS, the stat structure should have st_tag attribute
-        # However, Python's os.stat() may not expose it directly
-        # We need to use ctypes to access the raw stat structure
-        
-        # Try to access st_tag if available (z/OS specific)
-        if hasattr(st, 'st_tag'):
-            # Direct access if Python exposes it
-            ccsid = st.st_tag.ft_ccsid  # type: ignore[attr-defined]
-            txtflag = st.st_tag.ft_txtflag  # type: ignore[attr-defined]
-            
-            if verbose:
-                print(f"DEBUG: stat-based tag query for {path}")
-                print(f"  CCSID: {ccsid}, txtflag: {txtflag}")
-            
-            return (ccsid, txtflag)
-        else:
-            # Python's os.stat() doesn't expose st_tag on this platform
-            # Fall back to fcntl method
-            if verbose:
-                print(f"DEBUG: st_tag not available in os.stat(), using fcntl fallback")
-            return None
-            
-    except Exception as e:
-        if verbose:
-            print(f"DEBUG: stat-based tag query failed for {path}: {e}")
-        return None
-
-
-def get_file_encoding_fcntl(path: str, fd: Optional[int] = None,
-                            verbose: bool = False) -> str:
-    """
-    Get file encoding using z/OS stat or fcntl.
-    
-    This function first tries to use stat() to access file tags (similar to
-    IBM's zos-util implementation), which is more efficient. If that fails,
-    it falls back to using fcntl F_CONTROL_CVT with the f_cnvrt structure.
-    
-    Args:
-        path: File path (used for error messages and if fd not provided)
-        fd: Optional file descriptor (if None, file will be opened)
+        path: File path (supports regular files, named pipes, /dev/stdin, etc.)
         verbose: Enable verbose output
     
     Returns:
         Encoding name: 'ISO8859-1', 'IBM-1047', or 'untagged'
     
     Raises:
+        RuntimeError: If zos_util is not available
         OSError: If file cannot be accessed
     """
-    # Try stat-based approach first (more efficient, similar to IBM zos-util)
-    if fd is None:  # Only use stat if we have a path, not a file descriptor
-        tag_info = get_file_tag_stat(path, verbose=verbose)
-        if tag_info is not None:
-            ccsid, txtflag = tag_info
-            encoding = ENCODING_MAP.get(ccsid, 'untagged')
-            if verbose:
-                print(f"DEBUG: stat-based tag query successful for {path}")
-                print(f"  CCSID={ccsid}, txtflag={txtflag}, encoding={encoding}")
-            return encoding
-    
-    # Fall back to fcntl-based approach
-    close_fd = False
+    if not ZOS_UTIL_AVAILABLE:
+        raise RuntimeError(
+            "zos_util module is required but not available. "
+            "This should not happen on z/OS as it's automatically installed. "
+            "Please run 'make install-zos-util' or install manually."
+        )
     
     try:
-        # Open file if descriptor not provided
-        if fd is None:
-            fd = os.open(path, os.O_RDONLY)
-            close_fd = True
-        
-        if verbose:
-            print(f"DEBUG: Getting file tag for {path} using F_CONTROL_CVT (fcntl fallback)")
-            print(f"  File descriptor: {fd}")
-        
-        # Create f_cnvrt structure with cvtcmd=3 for query
-        qcvt = f_cnvrt(3, 0, 0)  # 3 = query command
-        
-        if verbose:
-            print(f"  Query structure: cvtcmd={qcvt.cvtcmd}, pccsid={qcvt.pccsid}, fccsid={qcvt.fccsid}")
-        
-        # Call fcntl with F_CONTROL_CVT
-        result = fcntl.fcntl(fd, F_CONTROL_CVT, qcvt)
-        
-        # Extract result using from_buffer_copy
-        cvt_result = f_cnvrt.from_buffer_copy(result)
-        
-        ccsid = cvt_result.fccsid
-        
-        if verbose:
-            print(f"  Result: cvtcmd={cvt_result.cvtcmd}, pccsid={cvt_result.pccsid}, fccsid={cvt_result.fccsid}")
-            print(f"  File CCSID={ccsid}")
-        
-        # Map CCSID to encoding name
+        ccsid, txtflag = zos_util.get_tag_info(path)  # type: ignore
         encoding = ENCODING_MAP.get(ccsid, 'untagged')
-        
         if verbose:
-            print(f"  Final detected encoding: {encoding}")
-        
+            print(f"DEBUG: zos_util tag query for {path}")
+            print(f"  CCSID={ccsid}, txtflag={txtflag}, encoding={encoding}")
         return encoding
-        
     except Exception as e:
         if verbose:
-            print(f"DEBUG: fcntl F_CONTROL_CVT failed for {path}: {e}")
+            print(f"DEBUG: zos_util.get_tag_info failed for {path}: {e}")
             import traceback
             traceback.print_exc()
-        # If fcntl fails, treat as untagged
+        # If query fails, treat as untagged
         return 'untagged'
-        
-    finally:
-        if close_fd and fd is not None:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
 
 
-def set_file_tag_chattr(path: str, ccsid: int, text_flag: bool = True,
-                        verbose: bool = False) -> bool:
+def set_file_tag_zos_util(path: str, ccsid: int, text_flag: bool = True,
+                           verbose: bool = False) -> bool:
     """
-    Set file CCSID using z/OS __chattr() system call.
+    Set file CCSID using zos_util module.
     
-    This is the preferred method for setting file tags, similar to IBM's
-    zos-util implementation. It uses the __chattr() system call directly
-    instead of spawning a subprocess.
+    This is the preferred method for setting file tags on z/OS.
+    It uses IBM's zos_util C extension which properly accesses z/OS system calls.
     
     Args:
         path: File path to tag
@@ -358,40 +146,18 @@ def set_file_tag_chattr(path: str, ccsid: int, text_flag: bool = True,
     Returns:
         True if successful, False otherwise
     """
-    if not CHATTR_AVAILABLE:
+    if not ZOS_UTIL_AVAILABLE:
         if verbose:
-            print("DEBUG: __chattr not available, falling back to chtag")
+            print("DEBUG: zos_util not available, falling back to chtag")
         return False
     
     try:
         if verbose:
-            print(f"DEBUG: Setting file CCSID for {path} using __chattr")
+            print(f"DEBUG: Setting file CCSID for {path} using zos_util")
             print(f"  Target CCSID={ccsid}, text_flag={text_flag}")
         
-        # Create attrib_t structure
-        attr = attrib_t()
-        
-        # Set the att_filetagchg flag (bit 0x40 in the third byte of att_flags)
-        # att_flags is a 32-bit field with various flag bits
-        # att_filetagchg is at bit position 0x00004000 (X'40' in third byte)
-        attr.att_flags = 0x00004000  # Set att_filetagchg bit
-        
-        # Set the file tag
-        attr.att_filetag.ft_ccsid = ccsid
-        attr.att_filetag.ft_txtflag = 1 if text_flag else 0
-        
-        # Convert path to bytes for C function
-        path_bytes = path.encode('utf-8')
-        
-        # Call __chattr
-        result = libc.__chattr(path_bytes, ctypes.byref(attr), ctypes.sizeof(attr))  # type: ignore[union-attr]
-        
-        if result < 0:
-            # Get errno
-            errno_val = ctypes.get_errno()
-            if verbose:
-                print(f"  __chattr failed with errno {errno_val}")
-            return False
+        # Use zos_util.chtag to set the file tag
+        zos_util.chtag(path, ccsid=ccsid, set_txtflag=text_flag)  # type: ignore
         
         if verbose:
             print(f"  Successfully set file CCSID to {ccsid}")
@@ -400,30 +166,10 @@ def set_file_tag_chattr(path: str, ccsid: int, text_flag: bool = True,
         
     except Exception as e:
         if verbose:
-            print(f"ERROR: Failed to set file CCSID using __chattr: {e}")
+            print(f"ERROR: Failed to set file CCSID using zos_util: {e}")
             import traceback
             traceback.print_exc()
         return False
-
-
-def _build_chtag_command(path: str, ccsid: int, text_flag: bool) -> list:
-    """Build chtag command based on file type."""
-    if text_flag:
-        return ['chtag', '-t', '-c', str(ccsid), path]
-    return ['chtag', '-b', path]
-
-
-def _log_chtag_execution(cmd: list, result, verbose: bool) -> None:
-    """Log chtag command execution details."""
-    if not verbose:
-        return
-    
-    print(f"  Running: {' '.join(cmd)}")
-    print(f"  Return code: {result.returncode}")
-    if result.stdout:
-        print(f"  stdout: {result.stdout}")
-    if result.stderr:
-        print(f"  stderr: {result.stderr}")
 
 
 def _verify_tag_set(path: str, ccsid: int, verbose: bool) -> bool:
@@ -447,14 +193,11 @@ def _verify_tag_set(path: str, ccsid: int, verbose: bool) -> bool:
 def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
                       verbose: bool = False) -> bool:
     """
-    Set file CCSID using z/OS __chattr() or chtag command.
+    Set file CCSID using zos_util module.
     
-    This function tries two methods in order:
-    1. __chattr() system call (preferred, similar to IBM zos-util)
-    2. chtag command (fallback for compatibility)
-    
-    F_SETTAG through Python's fcntl is unreliable - it may return errno 121
-    but not actually set the tag, especially on subsequent calls.
+    This function uses IBM's zos_util C extension module which properly
+    accesses z/OS system calls. On z/OS, zos_util is a hard requirement
+    and will be automatically installed by the build process.
     
     Args:
         path: File path to tag
@@ -464,42 +207,27 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
     
     Returns:
         True if successful, False otherwise
-    """
-    # Try __chattr first (preferred method, similar to IBM zos-util)
-    if CHATTR_AVAILABLE:
-        success = set_file_tag_chattr(path, ccsid, text_flag, verbose)
-        if success:
-            return _verify_tag_set(path, ccsid, verbose)
     
-    # Fall back to chtag command
-    try:
-        if verbose:
-            print(f"DEBUG: Setting file CCSID for {path} using chtag command (fallback)")
-            print(f"  Target CCSID={ccsid}, text_flag={text_flag}")
-        
-        cmd = _build_chtag_command(path, ccsid, text_flag)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        
-        _log_chtag_execution(cmd, result, verbose)
-        
-        if result.returncode != 0:
-            if verbose:
-                print(f"  chtag command failed with return code {result.returncode}")
-            return False
-        
+    Raises:
+        RuntimeError: If zos_util is not available (should not happen on z/OS)
+    """
+    if not ZOS_UTIL_AVAILABLE:
+        raise RuntimeError(
+            "zos_util module is required but not available. "
+            "This should not happen on z/OS as it's automatically installed. "
+            "Please run 'make install-zos-util' or install manually."
+        )
+    
+    success = set_file_tag_zos_util(path, ccsid, text_flag, verbose)
+    if success:
         return _verify_tag_set(path, ccsid, verbose)
-        
-    except Exception as e:
-        if verbose:
-            print(f"ERROR: Failed to set file CCSID for {path}: {e}")
-            import traceback
-            traceback.print_exc()
-        return False
+    
+    return False
 
 
 def get_file_tag_info(path: str, verbose: bool = False) -> Optional[FileTagInfo]:
     """
-    Get detailed file tag information.
+    Get detailed file tag information using zos_util.
     
     Args:
         path: File path
@@ -508,18 +236,18 @@ def get_file_tag_info(path: str, verbose: bool = False) -> Optional[FileTagInfo]
     Returns:
         FileTagInfo object or None if unable to get info
     """
+    if not ZOS_UTIL_AVAILABLE:
+        if verbose:
+            print(f"ERROR: zos_util not available, cannot get file tag info")
+        return None
+    
     try:
-        encoding = get_file_encoding_fcntl(path, verbose=verbose)
+        ccsid, text_flag = zos_util.get_tag_info(path)  # type: ignore
         
-        # Map encoding name back to CCSID
-        ccsid = CCSID_UNTAGGED
-        for c, e in ENCODING_MAP.items():
-            if e == encoding:
-                ccsid = c
-                break
+        if verbose:
+            print(f"DEBUG: Got file tag info for {path}: CCSID={ccsid}, text_flag={text_flag}")
         
-        # Assume text file (we don't have binary flag from simple query)
-        return FileTagInfo(ccsid, True)
+        return FileTagInfo(ccsid, text_flag)
         
     except Exception as e:
         if verbose:

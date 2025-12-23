@@ -1,134 +1,122 @@
-# Implementation Notes: stat-based File Tag Query and chattr-based Tag Setting
+# Implementation Notes: Complete zos-util Integration
 
 ## Overview
 
-Updated the `zos_ccsid_converter` to use IBM zos-util's approach for both querying and setting file tags:
-1. **Query**: stat-based approach (more efficient than fcntl)
-2. **Setting**: __chattr() system call (eliminates subprocess overhead)
+Completely simplified the `zos_ccsid_converter` to use IBM's zos-util C extension module exclusively:
+1. **Query**: zos_util.get_tag_info() for ALL file types (regular files, named pipes, /dev/stdin)
+2. **Setting**: zos_util.chtag() exclusively - **no fallback**
+3. **Removed**: ALL ctypes structures and fcntl code - no longer needed
 
-## Changes Made
+## Simplification Changes
 
-### 1. Added stat-based File Tag Query
+### 1. Direct Use of zos-util Functions
 
-**New Structure:**
+**Query Operations:**
 ```python
-class ft_tag(ctypes.Structure):
-    """z/OS file tag structure (part of stat structure)"""
-    _fields_ = [
-        ("ft_ccsid", ctypes.c_ushort),    # File CCSID
-        ("ft_txtflag", ctypes.c_uint),    # Text flag
-    ]
+# Before: Complex ctypes structures, os.stat(), AND fcntl fallback
+class file_tag(ctypes.Structure):
+    _fields_ = [...]
+
+class f_cnvrt(ctypes.BigEndianStructure):
+    _fields_ = [...]
+
+def get_file_tag_stat(path):
+    st = os.stat(path)
+    return (st.st_tag.ft_ccsid, st.st_tag.ft_txtflag)
+
+def get_file_encoding_fcntl(path, fd=None):
+    if fd is None:
+        # Try stat...
+    else:
+        # Use fcntl with f_cnvrt structure...
+
+# After: Single direct zos-util call
+ccsid, txtflag = zos_util.get_tag_info(path)  # Works for ALL file types
 ```
 
-**New Function:**
+**Setting Operations:**
 ```python
-def get_file_tag_stat(path: str, verbose: bool = False) -> Optional[Tuple[int, int]]:
-    """
-    Get file tag information using os.stat() - z/OS specific.
-    
-    Similar to IBM zos-util's _get_tag_impl implementation:
-    - Uses stat() system call to access st_tag structure
-    - Returns (ccsid, txtflag) tuple
-    - More efficient than fcntl or subprocess calls
-    """
+# Before: Complex attrib_t structure (never actually used)
+class attrib_t(ctypes.Structure):
+    _fields_ = [...]  # 20+ fields
+
+# After: Direct zos-util call
+zos_util.chtag(path, ccsid=ccsid, set_txtflag=text_flag)
 ```
 
-### 2. Updated get_file_encoding_fcntl()
+### 2. Removed ALL Unnecessary Structures
 
-The function now uses a two-tier approach:
+- **Removed `file_tag` class**: Not needed, zos-util handles this internally
+- **Removed `attrib_t` class**: Not needed, zos-util handles this internally
+- **Removed `f_cnvrt` class**: Not needed, zos-util supports named pipes and special files
 
-1. **Primary Method (stat-based):**
-   - Tries `get_file_tag_stat()` first
-   - Direct access to `st.st_tag.ft_ccsid` and `st.st_tag.ft_txtflag`
-   - More efficient, no file descriptor needed
-   - Similar to IBM's zos-util implementation
+### 3. Simplified Functions
 
-2. **Fallback Method (fcntl-based):**
-   - Uses `F_CONTROL_CVT` with `f_cnvrt` structure
-   - Used when file descriptor is provided
-   - Used when stat-based method is unavailable
+**get_file_encoding_fcntl():**
+- Uses `zos_util.get_tag_info()` exclusively
+- No fcntl fallback needed (zos-util supports all file types)
+- Removed `fd` parameter (no longer needed)
 
-### 3. Reference Implementation
+**get_file_tag_info():**
+- Uses `zos_util.get_tag_info()` directly
+- Returns proper text_flag from zos-util (not assumed)
 
-Based on IBM zos-util's `_get_tag_impl`:
-```c
-static PyObject *_get_tag_impl(PyObject *self, PyObject *args) {
-  struct stat st;
-  char *path;
-  int res;
+**set_file_tag_fcntl():**
+- Uses `zos_util.chtag()` exclusively
+- No fallback to chtag command
 
-  if (!PyArg_ParseTuple(args, "s", &path))
-    return NULL;
-
-  res = stat(path, &st);
-  if (res < 0) {
-    PyErr_SetFromErrno(PyExc_OSError);
-    return NULL;
-  }
-
-  unsigned short ccsid = st.st_tag.ft_ccsid;
-  int txtflag = st.st_tag.ft_txtflag;
-
-  return Py_BuildValue("(HN)", ccsid, PyBool_FromLong((long)(txtflag)));
-}
-```
+**CLI stdin handling:**
+- Changed from `fd=sys.stdin.fileno()` to `/dev/stdin` path
+- zos-util handles special files natively
 
 ## Benefits
 
-1. **Performance:**
-   - stat() is faster than fcntl() for file tag queries
-   - __chattr() eliminates subprocess overhead for tag setting
-2. **Simplicity:**
-   - Direct structure access, no complex fcntl marshalling
-   - No subprocess spawning for tag operations
-3. **Compatibility:**
-   - Maintains backward compatibility with fcntl fallback for queries
-   - Maintains chtag fallback for tag setting
-4. **Industry Standard:** Follows IBM's zos-util reference implementation pattern
+1. **Simplicity:**
+   - 90+ lines of ctypes structures removed (file_tag, attrib_t, f_cnvrt)
+   - 70+ lines of fcntl fallback code removed
+   - Direct function calls instead of complex structure manipulation
+   - Easier to understand and maintain
 
-### 4. Added chattr-based File Tag Setting
+2. **Reliability:**
+   - Uses IBM's tested implementation exclusively
+   - No custom ctypes code that might break
+   - No fcntl fallback complexity
+   - Proper error handling from zos-util
 
-**New Structure:**
-```python
-class attrib_t(ctypes.Structure):
-    """z/OS attrib_t structure for __chattr() system call"""
-    _fields_ = [
-        ("att_filetagchg", ctypes.c_uint),   # Flag: 1 = change file tag
-        ("att_filetag", ft_tag),              # File tag structure
-    ]
-```
+3. **Performance:**
+   - No unnecessary structure creation
+   - Direct C extension calls
+   - Minimal Python overhead
+   - Single code path (no fallback logic)
 
-**New Function:**
-```python
-def set_file_tag_chattr(path: str, ccsid: int, text_flag: bool = True,
-                        verbose: bool = False) -> bool:
-    """
-    Set file CCSID using z/OS __chattr() system call.
-    
-    Similar to IBM zos-util's __setccsid implementation:
-    - Uses __chattr() system call directly
-    - No subprocess overhead
-    - More efficient than chtag command
-    """
-```
+4. **Universality:**
+   - zos-util handles ALL file types (regular, pipes, special files)
+   - No special casing for file descriptors
+   - Consistent behavior across all file types
 
-**Updated Function:**
-```python
-def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
-                      verbose: bool = False) -> bool:
-    """
-    Now tries __chattr() first, falls back to chtag command.
-    """
-```
+### 4. Why This Approach
+
+**Why zos-util Instead of ctypes:**
+
+Initial attempts to use ctypes failed:
+- `ctypes.CDLL("libc.so")` - doesn't exist on z/OS
+- `ctypes.CDLL(None)` - can't find `__chattr` symbol
+- Pragma map complications with EBCDIC encoding
+
+**Solution**: Use IBM's zos-util directly - it's already doing exactly what we need.
+
+**No Fallback**: zos-util is automatically installed by build process, so no fallback needed.
 
 ## Important Notes
 
-### Elimination of chtag Subprocess
+### Use of zos-util C Extension (Hard Requirement)
 
-The implementation now uses `__chattr()` system call for setting file tags:
-- **Primary method**: `__chattr()` via ctypes (similar to IBM zos-util)
-- **Fallback**: `chtag` command via subprocess (for compatibility)
-- **Reason for change**: Eliminate subprocess overhead, follow IBM's reference implementation
+The implementation now uses IBM's zos-util module exclusively for setting file tags:
+- **Only method**: `zos_util.chtag()` via C extension (proper z/OS system call access)
+- **No fallback**: Raises RuntimeError if zos-util not available
+- **Reason for change**: ctypes doesn't work properly on z/OS for system calls; zos-util provides proper C extension access
+- **Automatic installation**: The Makefile automatically detects z/OS and installs zos-util if not present
+- **Hard requirement**: On z/OS, the code will fail at import time if zos-util is not installed
 
 ### Platform-Specific Code
 
@@ -144,33 +132,35 @@ The implementation maintains compatibility with existing tests:
 - stat-based method will be used on z/OS when available
 - fcntl fallback ensures functionality on all platforms
 
-## Future Enhancements
+## Code Metrics
 
-Potential improvements:
-1. Investigate native Python extension for tag setting (avoiding subprocess)
-2. Add performance benchmarks comparing stat vs fcntl methods
-3. Consider caching stat results for frequently accessed files
+**Lines Removed:**
+- ~90 lines of ctypes structure definitions (file_tag, attrib_t, f_cnvrt)
+- ~70 lines of fcntl fallback code
+- ~50 lines of custom stat-based query code
+- ~20 lines of chtag fallback code
+- Total: ~230 lines removed
+
+**Lines Added:**
+- ~15 lines of direct zos-util calls
+- Net reduction: ~215 lines (much simpler, more maintainable)
 
 ## Implementation Details
 
-### Query Method (stat-based)
-```c
-// IBM zos-util reference
-res = stat(path, &st);
-unsigned short ccsid = st.st_tag.ft_ccsid;
-int txtflag = st.st_tag.ft_txtflag;
+### Query Method (ALL file types)
+```python
+# Direct zos-util call - works for regular files, pipes, /dev/stdin, etc.
+ccsid, txtflag = zos_util.get_tag_info(path)
 ```
 
-### Setting Method (chattr-based)
-```c
-// IBM zos-util reference
-attrib_t attr;
-memset(&attr, 0, sizeof(attr));
-attr.att_filetagchg = 1;
-attr.att_filetag.ft_ccsid = ccsid;
-attr.att_filetag.ft_txtflag = txtflag;
-res = __chattr(path, &attr, sizeof(attr));
+### Setting Method (no fallback)
+```python
+# Direct zos-util call (no fallback)
+zos_util.chtag(path, ccsid=ccsid, set_txtflag=text_flag)
 ```
+
+### No Fallback Code
+All fcntl and ctypes code has been removed. zos-util handles everything.
 
 ## References
 

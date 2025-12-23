@@ -5,12 +5,15 @@ Command-line interface for zos-ccsid-converter.
 
 import sys
 import argparse
+from . import __version__
 from .converter import (
     get_file_tag_info,
+    get_file_encoding_fcntl,
     convert_to_ebcdic_fcntl,
     convert_stream_to_ebcdic,
     set_file_tag_fcntl,
     CCSID_IBM1047,
+    ENCODING_MAP,
 )
 
 
@@ -19,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Convert files to EBCDIC using z/OS fcntl',
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        prog='zos-ccsid-converter',
         epilog="""
 Examples:
   # Convert a file
@@ -32,6 +36,9 @@ Examples:
   
   # Convert from stdin to file
   cat input.txt | zos-ccsid-converter --stdin output.txt
+  
+  # Get encoding info from stdin
+  cat input.txt | zos-ccsid-converter --info --stdin
 """
     )
     
@@ -43,25 +50,51 @@ Examples:
                        help='Read from stdin instead of file')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='Enable verbose output')
+    parser.add_argument('--version', action='version',
+                       version=f'%(prog)s {__version__}')
     
     args = parser.parse_args()
     
     if args.info:
-        if not args.input:
-            print("ERROR: Input file required for --info", file=sys.stderr)
-            return 1
-        
-        info = get_file_tag_info(args.input, verbose=args.verbose)
-        if info:
-            print(f"File: {args.input}")
-            print(f"  CCSID: {info.ccsid}")
-            print(f"  Encoding: {info.encoding_name}")
-            print(f"  Text: {info.text_flag}")
-            return 0
+        if args.stdin:
+            # Get info from stdin using /dev/stdin path
+            # zos-util supports named pipes and special files
+            try:
+                encoding = get_file_encoding_fcntl("/dev/stdin", verbose=args.verbose)
+                
+                # Map encoding to CCSID for display
+                ccsid = None
+                for ccsid_val, enc_name in ENCODING_MAP.items():
+                    if enc_name == encoding:
+                        ccsid = ccsid_val
+                        break
+                
+                print("Source: stdin")
+                print(f"  CCSID: {ccsid if ccsid is not None else 'unknown'}")
+                print(f"  Encoding: {encoding}")
+                return 0
+            except Exception as e:
+                print(f"ERROR: Could not get tag info from stdin: {e}", file=sys.stderr)
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 1
         else:
-            print(f"ERROR: Could not get file tag info for {args.input}", 
-                  file=sys.stderr)
-            return 1
+            if not args.input:
+                print("ERROR: Input file required for --info", file=sys.stderr)
+                return 1
+            
+            info = get_file_tag_info(args.input, verbose=args.verbose)
+            if info:
+                print(f"File: {args.input}")
+                print(f"  CCSID: {info.ccsid}")
+                print(f"  Encoding: {info.encoding_name}")
+                print(f"  Text: {info.text_flag}")
+                return 0
+            else:
+                print(f"ERROR: Could not get file tag info for {args.input}",
+                      file=sys.stderr)
+                return 1
     
     elif args.stdin:
         # When using --stdin, the first positional argument is the output file

@@ -32,6 +32,7 @@ from .converter import (
 __version__ = '0.1.9'
 __author__ = 'Mike Fulton'
 __all__ = [
+    '__version__',
     'CodePageService',
     'detect_code_page',
     'detect_encoding',

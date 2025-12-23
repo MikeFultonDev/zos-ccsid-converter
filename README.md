@@ -4,25 +4,68 @@ A Python package for working with z/OS file code pages (CCSID) and converting fi
 
 ## Overview
 
-This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses z/OS-specific `fcntl` system calls for file tag detection and the `chtag` command for file tag setting, providing reliable access to file metadata. While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
+This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses IBM's zos-util C extension module exclusively for all file tag operations. File tag detection uses `zos_util.get_tag_info()` for all file types (regular files, named pipes, special files like /dev/stdin). File tag setting uses `zos_util.chtag()` exclusively. No ctypes or fcntl fallbacks needed - zos-util is a hard requirement on z/OS and is automatically installed by the build process. While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
 
 ## Installation
 
 ### From Source
 
+On z/OS, the build process automatically detects the platform and installs the required `zos-util` module if not already present.
+
 ```bash
 # Clone or download the package
 cd zos_ccsid_converter
 
-# Install the package
+# Build and install (zos-util installed automatically on z/OS)
+make install
+
+# Or use pip directly
 pip install .
 ```
 
 ### For Development
 
 ```bash
-# Install in editable mode with development dependencies
+# Install in editable mode (zos-util installed automatically on z/OS)
+make install-dev
+
+# Or use pip directly
 pip install -e .
+```
+
+### Manual zos-util Installation (if needed)
+
+If you need to manually install zos-util:
+
+```bash
+make install-zos-util
+```
+
+This will clone and build zos-util from https://github.com/IBM/zos-util.git
+
+### Running Without Installation (Development)
+
+If you want to run the CLI directly from your cloned git directory without installing:
+
+```bash
+# From the project root directory
+python3 -m zos_ccsid_converter.cli --help
+
+# Examples:
+python3 -m zos_ccsid_converter.cli input.txt output.txt
+python3 -m zos_ccsid_converter.cli --info input.txt
+python3 -m zos_ccsid_converter.cli --version
+cat input.txt | python3 -m zos_ccsid_converter.cli --info --stdin
+```
+
+Alternatively, you can use the Makefile for development setup:
+
+```bash
+# Create virtual environment and install in development mode
+make install-dev
+
+# Then use the CLI
+zos-ccsid-converter --help
 ```
 
 ## Usage
@@ -38,6 +81,18 @@ zos-ccsid-converter input.txt output.txt
 # Convert with verbose output
 zos-ccsid-converter -v input.txt output.txt
 
+# Get file encoding information
+zos-ccsid-converter --info input.txt
+
+# Convert from stdin to file
+cat input.txt | zos-ccsid-converter --stdin output.txt
+
+# Get encoding info from stdin (no output file needed)
+cat input.txt | zos-ccsid-converter --info --stdin
+
+# Show version
+zos-ccsid-converter --version
+
 # Show help
 zos-ccsid-converter --help
 ```
@@ -47,7 +102,10 @@ zos-ccsid-converter --help
 Import and use the package in your Python code:
 
 ```python
-from zos_ccsid_converter import CodePageService
+from zos_ccsid_converter import CodePageService, __version__
+
+# Get package version
+print(f"Version: {__version__}")
 
 # Initialize service
 service = CodePageService()
