@@ -88,7 +88,7 @@ check-zos-util:
 	fi
 
 # Build distribution packages
-build: venv clean check-zos-util
+build: venv clean bundle-zos-util
 	@UNAME=$$(uname -s); \
 	if [ "$$UNAME" != "OS/390" ]; then \
 		echo "ERROR: This package requires z/OS to build and run."; \
@@ -121,9 +121,11 @@ test: venv check-zos-util install-dev
 	@find . -type f -name '*.pyc' -exec rm -f {} \;
 	@echo "Running on z/OS - ensuring user site-packages are accessible..."
 	@USER_SITE=$$($(VENV_DIR)/bin/python3 -m site --user-site); \
+	PROJ_DIR=$$(pwd); \
 	echo "User site-packages: $$USER_SITE"; \
-	echo "Setting PYTHONPATH=$$USER_SITE:/usr/lpp/IBM/zoautil//lib/3.13:$$PYTHONPATH"; \
-	$(VENV_ACTIVATE) export PYTHONPATH=$$USER_SITE:/usr/lpp/IBM/zoautil/lib/3.13:$$PYTHONPATH && cd tests && python3 -c "import sys; print('Python path:', sys.path)" && python3 run_all_tests.py
+	echo "Project directory: $$PROJ_DIR"; \
+	echo "Setting PYTHONPATH=$$PROJ_DIR:$$USER_SITE:/usr/lpp/IBM/zoautil/lib/3.13:$$PYTHONPATH"; \
+	$(VENV_ACTIVATE) export PYTHONPATH=$$PROJ_DIR:$$USER_SITE:/usr/lpp/IBM/zoautil/lib/3.13:$$PYTHONPATH && cd tests && python3 -c "import sys; print('Python path:', sys.path)" && python3 run_all_tests.py
 	@echo ""
 	@echo "Tests complete!"
 
@@ -180,6 +182,46 @@ install-zos-util:
 	cd ../zos-util && CC=$$CC $$PROJ_DIR/$(VENV_DIR)/bin/python3 setup.py install --user
 	@echo ""
 	@echo "zos-util installation complete!"
+
+# Bundle zos-util shared library into package
+bundle-zos-util:
+	@echo "Bundling zos-util shared library..."
+	@if [ ! -d "../zos-util" ]; then \
+		echo "Cloning zos-util..."; \
+		cd .. && git clone https://github.com/IBM/zos-util.git; \
+	fi
+	@echo "Checking for available C compiler..."
+	@PROJ_DIR=$$(pwd); \
+	if command -v clang >/dev/null 2>&1; then \
+		echo "Found clang compiler"; \
+		export CC=clang; \
+	elif command -v xlc >/dev/null 2>&1; then \
+		echo "Found xlc compiler"; \
+		export CC=xlc; \
+	elif command -v c89 >/dev/null 2>&1; then \
+		echo "Found c89 compiler"; \
+		export CC=c89; \
+	elif command -v c99 >/dev/null 2>&1; then \
+		echo "Found c99 compiler"; \
+		export CC=c99; \
+	else \
+		echo "ERROR: No C compiler found. Please install clang, xlc, c89, or c99."; \
+		exit 1; \
+	fi; \
+	echo "Building zos-util with $$CC..."; \
+	cd ../zos-util && CC=$$CC $$PROJ_DIR/$(VENV_DIR)/bin/python3 setup.py build; \
+	echo "Copying shared library to package..."; \
+	mkdir -p $$PROJ_DIR/zos_ccsid_converter/lib; \
+	find ../zos-util/build -name "*.so" -exec cp {} $$PROJ_DIR/zos_ccsid_converter/lib/ \;; \
+	if [ -f $$PROJ_DIR/zos_ccsid_converter/lib/*.so ]; then \
+		echo "Successfully bundled zos-util shared library"; \
+		ls -l $$PROJ_DIR/zos_ccsid_converter/lib/; \
+	else \
+		echo "ERROR: Failed to find zos-util shared library"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "zos-util bundling complete!"
 
 # Install in development mode
 install-dev: venv check-zos-util

@@ -136,3 +136,7 @@ Thumbs.db
 # Project specific
 *.bak
 .bobmodes
+
+# Bundled libraries (generated during build)
+# Note: These are excluded from git but included in the package
+zos_ccsid_converter/lib/

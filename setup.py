@@ -13,7 +13,7 @@ def read_file(filename):
 
 setup(
     name='zos-ccsid-converter',
-    version='0.1.9',
+    version='0.1.10',
     description='z/OS CCSID converter using fcntl for code page detection and conversion',
     long_description=read_file('README.md'),
     long_description_content_type='text/markdown',
@@ -21,6 +21,9 @@ setup(
     author_email='',
     url='https://github.com/MikeFultonDev/zos_ccsid_converter',
     packages=find_packages(),
+    package_data={
+        'zos_ccsid_converter': ['lib/*.so'],
+    },
     python_requires='>=3.12',
     classifiers=[
         'Development Status :: 3 - Alpha',

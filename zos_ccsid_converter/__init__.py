@@ -29,7 +29,7 @@ from .converter import (
     PYTHON_ENCODING_MAP,
 )
 
-__version__ = '0.1.9'
+__version__ = '0.1.10'
 __author__ = 'Mike Fulton'
 __all__ = [
     '__version__',

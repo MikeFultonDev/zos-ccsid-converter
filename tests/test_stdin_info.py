@@ -56,20 +56,23 @@ def test_stdin_info_basic(results: TestResults):
     try:
         # Get user site-packages and add to environment
         import os
+        from pathlib import Path
         env = os.environ.copy()
         try:
+            # Get project directory (parent of tests directory)
+            project_dir = str(Path(__file__).parent.parent)
             user_site = subprocess.run(
                 [sys.executable, '-m', 'site', '--user-site'],
                 capture_output=True,
                 text=True,
                 check=True
             ).stdout.strip()
-            # Add both user site-packages and zoautil path
+            # Add project dir first, then user site-packages and zoautil path
             zoautil_path = "/usr/lpp/IBM/zoautil/lib/3.13"
             if 'PYTHONPATH' in env:
-                env['PYTHONPATH'] = f"{user_site}:{zoautil_path}:{env['PYTHONPATH']}"
+                env['PYTHONPATH'] = f"{project_dir}:{user_site}:{zoautil_path}:{env['PYTHONPATH']}"
             else:
-                env['PYTHONPATH'] = f"{user_site}:{zoautil_path}"
+                env['PYTHONPATH'] = f"{project_dir}:{user_site}:{zoautil_path}"
         except:
             pass  # If we can't get user site, continue without it
         
@@ -127,20 +130,23 @@ def test_stdin_info_no_output_required(results: TestResults):
     try:
         # Get user site-packages and add to environment
         import os
+        from pathlib import Path
         env = os.environ.copy()
         try:
+            # Get project directory (parent of tests directory)
+            project_dir = str(Path(__file__).parent.parent)
             user_site = subprocess.run(
                 [sys.executable, '-m', 'site', '--user-site'],
                 capture_output=True,
                 text=True,
                 check=True
             ).stdout.strip()
-            # Add both user site-packages and zoautil path
+            # Add project dir first, then user site-packages and zoautil path
             zoautil_path = "/usr/lpp/IBM/zoautil/lib/3.13"
             if 'PYTHONPATH' in env:
-                env['PYTHONPATH'] = f"{user_site}:{zoautil_path}:{env['PYTHONPATH']}"
+                env['PYTHONPATH'] = f"{project_dir}:{user_site}:{zoautil_path}:{env['PYTHONPATH']}"
             else:
-                env['PYTHONPATH'] = f"{user_site}:{zoautil_path}"
+                env['PYTHONPATH'] = f"{project_dir}:{user_site}:{zoautil_path}"
         except:
             pass  # If we can't get user site, continue without it
         

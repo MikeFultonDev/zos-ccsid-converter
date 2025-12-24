@@ -31,29 +31,70 @@ Note: IBM's zos-util C extension module is REQUIRED on z/OS.
 import os
 import sys
 import stat
+import ctypes
 from typing import Optional, Dict, Tuple, BinaryIO, Any
 
 # Import zos_util for native z/OS file tagging support
-# This is REQUIRED on z/OS systems
-try:
-    import zos_util
-    ZOS_UTIL_AVAILABLE = True
-except ImportError as e:
-    # Check if we're on z/OS
+# This package bundles the zos_util shared library for self-contained operation
+ZOS_UTIL_AVAILABLE = False
+zos_util = None  # type: ignore
+
+def _load_bundled_zos_util():
+    """Load the bundled zos_util shared library."""
+    global zos_util, ZOS_UTIL_AVAILABLE
+    
+    # First try to import zos_util normally (if already installed)
+    try:
+        import zos_util as zu  # type: ignore
+        zos_util = zu
+        ZOS_UTIL_AVAILABLE = True
+        return
+    except ImportError:
+        pass
+    
+    # Try to load the bundled shared library
+    try:
+        # Get the directory where this module is located
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        lib_dir = os.path.join(module_dir, 'lib')
+        
+        # Find the .so file
+        if os.path.exists(lib_dir):
+            so_files = [f for f in os.listdir(lib_dir) if f.endswith('.so')]
+            if so_files:
+                so_path = os.path.join(lib_dir, so_files[0])
+                
+                # Add the lib directory to sys.path so Python can find the module
+                if lib_dir not in sys.path:
+                    sys.path.insert(0, lib_dir)
+                
+                # Try to import zos_util from the bundled location
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("zos_util", so_path)
+                if spec and spec.loader:
+                    zu = importlib.util.module_from_spec(spec)
+                    sys.modules['zos_util'] = zu
+                    spec.loader.exec_module(zu)
+                    zos_util = zu
+                    ZOS_UTIL_AVAILABLE = True
+                    return
+    except Exception as e:
+        pass
+    
+    # Check if we're on z/OS and fail if we can't load zos_util
     import platform
     if platform.system().lower() == 'os/390' or sys.platform == 'zos':
         raise ImportError(
-            "zos_util module is required on z/OS but not found. "
-            "Please install it:\n"
-            "  git clone https://github.com/IBM/zos-util.git\n"
-            "  cd zos-util && python3 setup.py install --user\n"
-            "Or use the Makefile:\n"
-            "  make install-zos-util\n"
-            f"Original error: {e}"
-        ) from e
+            "zos_util module is required on z/OS but could not be loaded. "
+            "The bundled shared library was not found or could not be loaded. "
+            "Please ensure the package was built correctly on z/OS."
+        )
+    
     # Not on z/OS, so zos_util is optional
     ZOS_UTIL_AVAILABLE = False
-    zos_util = None  # type: ignore
+
+# Load the bundled zos_util on module import
+_load_bundled_zos_util()
 
 
 # CCSID (Coded Character Set ID) mappings
@@ -103,16 +144,8 @@ def get_file_encoding_fcntl(path: str, verbose: bool = False) -> str:
         Encoding name: 'ISO8859-1', 'IBM-1047', or 'untagged'
     
     Raises:
-        RuntimeError: If zos_util is not available
         OSError: If file cannot be accessed
     """
-    if not ZOS_UTIL_AVAILABLE:
-        raise RuntimeError(
-            "zos_util module is required but not available. "
-            "This should not happen on z/OS as it's automatically installed. "
-            "Please run 'make install-zos-util' or install manually."
-        )
-    
     try:
         ccsid, txtflag = zos_util.get_tag_info(path)  # type: ignore
         encoding = ENCODING_MAP.get(ccsid, 'untagged')
@@ -146,11 +179,6 @@ def set_file_tag_zos_util(path: str, ccsid: int, text_flag: bool = True,
     Returns:
         True if successful, False otherwise
     """
-    if not ZOS_UTIL_AVAILABLE:
-        if verbose:
-            print("DEBUG: zos_util not available, falling back to chtag")
-        return False
-    
     try:
         if verbose:
             print(f"DEBUG: Setting file CCSID for {path} using zos_util")
@@ -208,16 +236,7 @@ def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
     Returns:
         True if successful, False otherwise
     
-    Raises:
-        RuntimeError: If zos_util is not available (should not happen on z/OS)
     """
-    if not ZOS_UTIL_AVAILABLE:
-        raise RuntimeError(
-            "zos_util module is required but not available. "
-            "This should not happen on z/OS as it's automatically installed. "
-            "Please run 'make install-zos-util' or install manually."
-        )
-    
     success = set_file_tag_zos_util(path, ccsid, text_flag, verbose)
     if success:
         return _verify_tag_set(path, ccsid, verbose)
@@ -236,11 +255,6 @@ def get_file_tag_info(path: str, verbose: bool = False) -> Optional[FileTagInfo]
     Returns:
         FileTagInfo object or None if unable to get info
     """
-    if not ZOS_UTIL_AVAILABLE:
-        if verbose:
-            print(f"ERROR: zos_util not available, cannot get file tag info")
-        return None
-    
     try:
         ccsid, text_flag = zos_util.get_tag_info(path)  # type: ignore
         

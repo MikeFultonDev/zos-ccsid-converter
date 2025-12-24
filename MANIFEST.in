@@ -2,5 +2,6 @@ include README.md
 include LICENSE
 include pyproject.toml
 recursive-include zos_ccsid_converter *.py
+recursive-include zos_ccsid_converter/lib *.so
 recursive-include tests *.py
 recursive-include examples *.py

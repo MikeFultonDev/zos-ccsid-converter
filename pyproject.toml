@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zos-ccsid-converter"
-version = "0.1.9"
+version = "0.1.10"
 description = "z/OS CCSID converter using fcntl for code page detection and conversion"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,7 +41,7 @@ zos-ccsid-converter = "zos_ccsid_converter.cli:main"
 packages = ["zos_ccsid_converter"]
 
 [tool.setuptools.package-data]
-zos_ccsid_converter = ["py.typed"]
+zos_ccsid_converter = ["py.typed", "lib/*.so"]
 
 [tool.setuptools_scm]
 # Suppress setuptools_scm warnings when not using git versioning

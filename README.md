@@ -4,13 +4,25 @@ A Python package for working with z/OS file code pages (CCSID) and converting fi
 
 ## Overview
 
-This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses IBM's zos-util C extension module exclusively for all file tag operations. File tag detection uses `zos_util.get_tag_info()` for all file types (regular files, named pipes, special files like /dev/stdin). File tag setting uses `zos_util.chtag()` exclusively. No ctypes or fcntl fallbacks needed - zos-util is a hard requirement on z/OS and is automatically installed by the build process. While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
+This package provides a robust, high-performance solution for code page detection and file conversion on z/OS. It uses IBM's zos-util C extension module exclusively for all file tag operations. File tag detection uses `zos_util.get_tag_info()` for all file types (regular files, named pipes, special files like /dev/stdin). File tag setting uses `zos_util.chtag()` exclusively.
+
+**Self-Contained Package**: This package bundles the zos_util shared library, making it completely self-contained with no external dependencies. When you install from PyPI, everything you need is included in the package.
+
+While currently focused on ASCII (ISO8859-1) and EBCDIC (IBM-1047) conversion, the architecture supports extension to additional code pages.
 
 ## Installation
 
+### From PyPI (Recommended)
+
+```bash
+pip install zos-ccsid-converter
+```
+
+No additional dependencies or prerequisites required - the package is completely self-contained!
+
 ### From Source
 
-On z/OS, the build process automatically detects the platform and installs the required `zos-util` module if not already present.
+On z/OS, the build process automatically bundles the zos-util shared library into the package.
 
 ```bash
 # Clone or download the package
@@ -33,15 +45,20 @@ make install-dev
 pip install -e .
 ```
 
-### Manual zos-util Installation (if needed)
+### Building from Source
 
-If you need to manually install zos-util:
+The package bundles the zos-util shared library during the build process:
 
 ```bash
-make install-zos-util
+make build
 ```
 
-This will clone and build zos-util from https://github.com/IBM/zos-util.git
+This will:
+- Clone and build zos-util from https://github.com/IBM/zos-util.git
+- Bundle the compiled shared library into the package
+- Create wheel and source distributions
+
+See [BUNDLING.md](BUNDLING.md) for detailed information about the bundling process.
 
 ### Running Without Installation (Development)
 
