@@ -213,6 +213,9 @@ bundle-zos-util:
 	echo "Copying shared library to package..."; \
 	mkdir -p $$PROJ_DIR/zos_ccsid_converter/lib; \
 	find ../zos-util/build -name "*.so" -exec cp {} $$PROJ_DIR/zos_ccsid_converter/lib/ \;; \
+	echo "Ensuring lib is not treated as a Python package..."; \
+	rm -f $$PROJ_DIR/zos_ccsid_converter/lib/__init__.py; \
+	touch $$PROJ_DIR/zos_ccsid_converter/lib/.gitkeep; \
 	if [ -f $$PROJ_DIR/zos_ccsid_converter/lib/*.so ]; then \
 		echo "Successfully bundled zos-util shared library"; \
 		ls -l $$PROJ_DIR/zos_ccsid_converter/lib/; \

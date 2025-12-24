@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zos-ccsid-converter"
-version = "0.1.10"
+version = "0.1.11"
 description = "z/OS CCSID converter using fcntl for code page detection and conversion"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,8 +37,9 @@ Documentation = "https://github.com/MikeFultonDev/zos-ccsid-converter"
 [project.scripts]
 zos-ccsid-converter = "zos_ccsid_converter.cli:main"
 
-[tool.setuptools]
-packages = ["zos_ccsid_converter"]
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["zos_ccsid_converter.lib*"]
 
 [tool.setuptools.package-data]
 zos_ccsid_converter = ["py.typed", "lib/*.so"]

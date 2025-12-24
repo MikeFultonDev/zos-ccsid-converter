@@ -6,7 +6,7 @@ The `zos-ccsid-converter` package has been successfully refactored from the orig
 
 ## Package Structure
 
-```
+```text
 zos_ccsid_converter/
 ├── setup.py                           # Package configuration
 ├── pyproject.toml                     # Modern Python packaging metadata
@@ -224,6 +224,7 @@ ccsid = service.get_ccsid('/path/to/file')
 ```
 
 **Changes Required:**
+
 - Update import statements from `import ebcdic_converter_fcntl` to `from zos_ccsid_converter import ...`
 - All functionality remains the same
 - CLI command changes from `./ebcdic_converter_fcntl.py` to `zos-ccsid-converter`
@@ -231,27 +232,32 @@ ccsid = service.get_ccsid('/path/to/file')
 ## Files Included in Package
 
 ### Core Package Files
+
 - `zos_ccsid_converter/__init__.py` - Package initialization and exports
 - `zos_ccsid_converter/converter.py` - Core conversion logic (from original script)
 - `zos_ccsid_converter/cli.py` - Command-line interface (extracted from original)
 
 ### Configuration Files
+
 - `setup.py` - Package metadata and dependencies
 - `pyproject.toml` - Modern Python packaging configuration
 - `MANIFEST.in` - File inclusion rules for distribution
 
 ### Documentation
+
 - `README.md` - Complete package documentation
 - `LICENSE` - Apache 2.0 license
 - `PACKAGE_SUMMARY.md` - This summary
 
 ### Tests and Examples
+
 - `tests/test_ebcdic_converter.py` - Comprehensive test suite
 - `examples/example_service_usage.py` - 7 usage examples
 
 ## Original Files (Preserved)
 
 The original implementation files are preserved in `etc/install/base/uss_build/bin/`:
+
 - `ebcdic_converter_fcntl.py` - Original script
 - `test_ebcdic_converter.py` - Original tests
 - `example_service_usage.py` - Original examples
@@ -268,6 +274,7 @@ The original implementation files are preserved in `etc/install/base/uss_build/b
 ## Support and Maintenance
 
 For issues or questions:
+
 1. Refer to README.md for complete documentation
 2. Check examples/ directory for usage patterns
 3. Run tests/ to verify installation
@@ -276,29 +283,34 @@ For issues or questions:
 ## Next Steps for Customers
 
 1. **Install the package:**
+
    ```bash
    pip install zos-ccsid-converter
    ```
 
 2. **Verify installation:**
+
    ```bash
    zos-ccsid-converter --help
    python3 -c "from zos_ccsid_converter import CodePageService; print('OK')"
    ```
 
 3. **Run tests:**
+
    ```bash
    cd tests
    python3 test_ebcdic_converter.py
    ```
 
 4. **Review examples:**
+
    ```bash
    cd examples
    python3 example_service_usage.py
    ```
 
 5. **Integrate into your code:**
+
    - Update imports
    - Use CodePageService API
    - Or use CLI command
@@ -315,4 +327,4 @@ The EBCDIC converter has been successfully packaged for distribution:
 ✅ Apache 2.0 license included
 ✅ Ready for pip installation and distribution
 
-The package is ready to be distributed to customers via source distribution, built packages, or private PyPI repository.
+The package is ready to be distributed to customers via source distribution, built packages, or private PyPI repository

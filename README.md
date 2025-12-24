@@ -149,13 +149,14 @@ stats = service.convert_file('/input.txt', '/output.txt')
 ## Features
 
 **Core Capabilities:**
-- Direct fcntl system calls for file tag detection (F_CONTROL_CVT with f_cnvrt structure)
-- Uses `chtag` command for reliable file tag setting
-- Uses Python ctypes.BigEndianStructure for proper z/OS big-endian byte order
+- Uses IBM's zos_util C extension module exclusively for all file tag operations
+- File tag detection via `zos_util.get_tag_info()` for all file types (regular files, named pipes, special files)
+- File tag setting via `zos_util.chtag()` for reliable tag operations
 - Support for regular files, named pipes (FIFOs), and streams
 - Graceful handling of unconvertible characters
 - Detailed conversion statistics
-- Minimal subprocess overhead (only for tag setting)
+- No subprocess overhead - all operations use native C extensions
+- Self-contained package with bundled zos_util shared library
 - Tested and verified on z/OS with 11/11 tests passing
 
 ## API Reference
@@ -389,36 +390,39 @@ See `examples/example_service_usage.py` for complete working examples:
 
 ### z/OS File Tagging Implementation
 
-The package uses z/OS-specific methods for file tagging:
+The package uses IBM's zos_util C extension module exclusively for all file tag operations:
 
-**Encoding Detection (F_CONTROL_CVT):**
+**Encoding Detection:**
 ```python
-# Uses F_CONTROL_CVT (13) with f_cnvrt structure
-qcvt = f_cnvrt(3, 0, 0)  # cvtcmd=3 for query
-result = fcntl.fcntl(fd, F_CONTROL_CVT, qcvt)
-cvt_result = f_cnvrt.from_buffer_copy(result)
+# Uses zos_util.get_tag_info() for all file types
+import zos_util
 
-# Get file CCSID directly
-ccsid = cvt_result.fccsid
+tag_info = zos_util.get_tag_info(path)
+ccsid = tag_info['ccsid']
+is_text = tag_info['text']
 ```
 
-**File Tag Setting (chtag command):**
+**File Tag Setting:**
 ```python
-# Uses chtag command for reliable tag setting
-subprocess.run(['chtag', '-t', '-c', str(ccsid), path])
+# Uses zos_util.chtag() for reliable tag setting
+import zos_util
+
+# Set text file tag
+zos_util.chtag(path, text=True, ccsid=1047)
+
+# Set binary file tag
+zos_util.chtag(path, text=False)
 ```
 
 **Advantages:**
-- F_CONTROL_CVT: Direct system call (no subprocess), works with file descriptors
-- Uses ctypes.BigEndianStructure for proper z/OS big-endian byte order
-- chtag: Reliable file tag setting (F_SETTAG through Python's fcntl is unreliable)
-- Native z/OS API usage
-- Correct handling of z/OS-specific structures
+- Native C extension for optimal performance
+- No subprocess overhead
+- Works with all file types (regular files, pipes, special files like /dev/stdin)
+- Reliable and consistent tag operations
+- Self-contained - bundled shared library included in package
 - Tested and verified on z/OS
 
-## z/OS fcntl File Tagging
-
-### CCSID Mappings
+## CCSID Mappings
 
 | CCSID | Encoding | Description |
 |-------|----------|-------------|
@@ -426,86 +430,10 @@ subprocess.run(['chtag', '-t', '-c', str(ccsid), path])
 | 1047  | IBM-1047 | EBCDIC |
 | 0     | untagged | No tag set |
 
-### fcntl Constants
-
-```python
-F_SETTAG = 12       # Set file tag information
-F_CONTROL_CVT = 13  # Control conversion (query/set file CCSID)
-```
-
-**Note:** z/OS does not have F_GETTAG. Use F_CONTROL_CVT with the f_cnvrt structure to query file tags.
-
-### File Tag Structures
-
-**Important:** Both structures use `ctypes.BigEndianStructure` to match z/OS big-endian byte order.
-
-#### f_cnvrt Structure (for F_CONTROL_CVT)
-
-Used to query file conversion settings (CCSID detection):
-
-```c
-struct f_cnvrt {
-    int cvtcmd;      // Command: 3=query, others for setting
-    short pccsid;    // Process CCSID
-    short fccsid;    // File CCSID (output when querying)
-}
-```
-
-Total size: 8 bytes (4+2+2)
-
-```python
-# Python ctypes definition with big-endian byte order
-class f_cnvrt(ctypes.BigEndianStructure):
-    _fields_ = [
-        ("cvtcmd", ctypes.c_int32),   # 4 bytes
-        ("pccsid", ctypes.c_int16),   # 2 bytes
-        ("fccsid", ctypes.c_int16),   # 2 bytes
-    ]
-
-# Usage example:
-qcvt = f_cnvrt(3, 0, 0)  # cvtcmd=3 for query
-result = fcntl.fcntl(fd, F_CONTROL_CVT, qcvt)
-cvt_result = f_cnvrt.from_buffer_copy(result)
-file_ccsid = cvt_result.fccsid  # Get file CCSID
-```
-
-**Status:** ✅ Fully working and tested on z/OS
-
-#### File Tag Setting (chtag command)
-
-The package uses the `chtag` command for setting file tags, as F_SETTAG through Python's fcntl is unreliable:
-
-```bash
-# Set text file tag
-chtag -t -c 1047 /path/to/file
-
-# Set binary file tag
-chtag -b /path/to/file
-```
-
-**Python usage:**
-```python
-import subprocess
-
-# Set text file to IBM-1047
-subprocess.run(['chtag', '-t', '-c', '1047', '/path/to/file'])
-
-# Set binary file
-subprocess.run(['chtag', '-b', '/path/to/file'])
-```
-
-**Status:** ✅ Reliable and fully working on z/OS
-
-**Note:** F_SETTAG through Python's fcntl has known issues:
-- Always returns errno 121 (Invalid argument)
-- Fails to change tags when setting to a different CCSID
-- See `test_f_settag_issue.py` for detailed demonstration of the issue
-
 ## Requirements
 
 - Python 3.6 or higher
 - z/OS operating system
-- Access to z/OS fcntl system calls
 
 ## License
 
@@ -585,107 +513,64 @@ with open('output.txt', 'wb') as f_out:
 
 ### Expected Output
 
-```
-======================================================================
-EBCDIC Converter Test Suite
-Testing: ebcdic_converter_fcntl.py
-======================================================================
+All tests should pass when run on z/OS. The test suite validates file conversion, pipe handling, tag operations, and error handling.
 
-Running file conversion tests...
-✓ PASS: ISO8859-1 file conversion
-✓ PASS: IBM-1047 file handling
-✓ PASS: Untagged file handling
-✓ PASS: Empty file conversion
-✓ PASS: Special characters conversion
-✓ PASS: Large file conversion
-
-Running pipe conversion tests...
-✓ PASS: ISO8859-1 pipe conversion
-✓ PASS: IBM-1047 pipe conversion
-
-Running file tag operation tests...
-✓ PASS: File tag operations
-
-Running error handling tests...
-✓ PASS: Nonexistent file error handling
-
-======================================================================
-TEST SUMMARY
-======================================================================
-Total tests: 11
-Passed: 11
-Failed: 0
-======================================================================
-```
-
-## Key Behavioral Differences
+## Behavior
 
 ### Untagged Files
 
-**Original:** Treats untagged files as EBCDIC (copies as binary)
-**New:** Same behavior - treats untagged files as IBM-1047
+Treats untagged files as IBM-1047 (EBCDIC) and copies them as binary without conversion.
 
 ### Error Handling
 
-**Original:** May fail silently or with generic errors
-**New:** Returns detailed error information in stats dictionary
+Returns detailed error information in the stats dictionary, including error messages and context.
 
 ### Unconvertible Characters
 
-**Original:** May fail on unconvertible characters
-**New:** Uses `errors='replace'` to gracefully handle unconvertible characters, leaving them with their initial value or replacing with a substitute character
+Uses `errors='replace'` to gracefully handle unconvertible characters, replacing them with a substitute character rather than failing.
 
 ### Performance
 
-**Original:** ~10-50ms overhead per file (subprocess spawn)
-**New:** ~1-5ms overhead per file (direct system call)
+Direct C extension calls provide optimal performance with minimal overhead.
 
 ## Technical Details
 
 ### File Tag Detection Algorithm
 
-1. Open file (or use provided file descriptor)
-2. Prepare `attrib_t` structure initialized with zeros
-3. Call `fcntl(fd, F_GETTAG, buffer)`
-4. Unpack result to extract `att_ccsid` and `att_txtflag`
-5. Map CCSID to encoding name
+1. Call `zos_util.get_tag_info(path)` to get file tag information
+2. Extract CCSID and text flag from returned dictionary
+3. Map CCSID to encoding name (ISO8859-1, IBM-1047, or untagged)
 
 ### File Tag Setting Algorithm
 
-1. Open file with read/write access
-2. Prepare `attrib_t` structure:
-   - Set `att_filetagchg = 1` (indicate change)
-   - Set `att_txtflag = 1` for text, `0` for binary
-   - Set `att_ccsid` to desired CCSID
-   - Set reserved fields to 0
-3. Call `fcntl(fd, F_SETTAG, buffer)`
-4. Close file
+1. Call `zos_util.chtag(path, text=True/False, ccsid=value)` to set file tag
+2. zos_util handles all low-level system calls internally
 
 ### Conversion Algorithm
 
 For **ISO8859-1 → IBM-1047**:
-1. Detect encoding using fcntl
+1. Detect encoding using `zos_util.get_tag_info()`
 2. Read file as ISO8859-1 text with `errors='replace'`
 3. Write file as IBM-1047 text with `errors='replace'`
-4. Tag output file as IBM-1047 using fcntl
+4. Tag output file as IBM-1047 using `zos_util.chtag()`
 
 For **IBM-1047 or untagged**:
-1. Detect encoding using fcntl
+1. Detect encoding using `zos_util.get_tag_info()`
 2. Copy file as binary (no conversion)
-3. Tag output file as IBM-1047 if untagged
+3. Tag output file as IBM-1047 if untagged using `zos_util.chtag()`
 
 ## Troubleshooting
 
-### "fcntl failed" Error
+### File Tag Operations
 
-If fcntl operations fail, the converter falls back to treating files as untagged. This can happen if:
+The package uses zos_util for all file tag operations. If tag operations fail, this can happen if:
 - File system doesn't support tagging
 - Insufficient permissions
 - File is on a non-z/OS file system
 
 ### Pipe Conversion
 
-Named pipes (FIFOs) cannot be tagged with fcntl. The `convert_input()` method automatically detects pipes and uses the appropriate stream conversion method, then tags the output file. For direct stream access, use `convert_stream_to_ebcdic()`.
+Named pipes (FIFOs) and special files like /dev/stdin are fully supported. The `convert_input()` method automatically detects pipes and uses the appropriate stream conversion method, then tags the output file.
 
 Example:
 ```python
@@ -704,9 +589,9 @@ The converter uses `errors='replace'` to handle unconvertible characters. Charac
 
 ## References
 
-- [IBM z/OS fcntl Documentation](https://www.ibm.com/docs/en/zos/3.2.0?topic=SSLTBW_3.2.0/com.ibm.zos.v3r2.bpxbd00/rtfcndesc.html)
+- [IBM zos-util GitHub Repository](https://github.com/IBM/zos-util)
 - [z/OS File Tagging](https://www.ibm.com/docs/en/zos/3.2.0?topic=files-tagging)
-- [Python fcntl Module](https://docs.python.org/3/library/fcntl.html)
+- [Python Packaging Guide](https://packaging.python.org/)
 
 ## License
 

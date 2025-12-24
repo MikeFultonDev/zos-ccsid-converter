@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_ebcdic_converter.py - Comprehensive test driver for ebcdic_converter_fcntl
+test_ebcdic_converter.py - Comprehensive test driver for zos_ccsid_converter
 
 This test driver validates the fcntl-based EBCDIC converter with:
 - ISO8859-1 encoded files
@@ -96,7 +96,7 @@ class TestEnvironment:
                 ccsid = converter.CCSID_UNTAGGED
             
             if ccsid != converter.CCSID_UNTAGGED:
-                converter.set_file_tag_fcntl(path, ccsid, verbose=self.verbose)
+                converter.set_file_tag(path, ccsid, verbose=self.verbose)
         
         self.files_created.append(path)
         
@@ -161,8 +161,8 @@ def test_iso8859_file_conversion(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'iso8859_output.txt')
         
         # Convert
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file, 
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -187,8 +187,8 @@ def test_iso8859_file_conversion(env: TestEnvironment, results: TestResults):
             return
         
         # Verify output file is tagged as IBM-1047
-        output_encoding = converter.get_file_encoding_fcntl(output_file, 
-                                                            verbose=env.verbose)
+        output_encoding = converter.get_file_encoding(output_file,
+                                                      verbose=env.verbose)
         if output_encoding != 'IBM-1047':
             results.add_fail(test_name, 
                            f"Output not tagged as IBM-1047: {output_encoding}")
@@ -212,8 +212,8 @@ def test_ibm1047_file_conversion(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'ibm1047_output.txt')
         
         # Convert (should just copy)
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -266,23 +266,23 @@ def test_untagged_file_conversion(env: TestEnvironment, results: TestResults):
             print(f"  Created untagged file with EBCDIC bytes: {input_file}")
         
         # Verify file is actually untagged
-        detected_encoding = converter.get_file_encoding_fcntl(input_file,
-                                                              verbose=env.verbose)
+        detected_encoding = converter.get_file_encoding(input_file,
+                                                       verbose=env.verbose)
         
         # If Python/system auto-tagged the file, try to manually untag it
         if detected_encoding != 'untagged':
             if env.verbose:
                 print(f"  File was auto-tagged as {detected_encoding}, attempting to untag...")
             # Try to set CCSID to 0 (untagged)
-            if converter.set_file_tag_fcntl(input_file, 0, verbose=env.verbose):
-                detected_encoding = converter.get_file_encoding_fcntl(input_file,
-                                                                      verbose=env.verbose)
+            if converter.set_file_tag(input_file, 0, verbose=env.verbose):
+                detected_encoding = converter.get_file_encoding(input_file,
+                                                               verbose=env.verbose)
                 if env.verbose:
                     print(f"  After untagging: {detected_encoding}")
             else:
                 # If we can't untag, skip this test
                 if env.verbose:
-                    print(f"  Cannot untag file on this system, skipping test")
+                    print("  Cannot untag file on this system, skipping test")
                 results.add_pass(test_name + " (skipped - cannot untag)")
                 return
         
@@ -296,8 +296,8 @@ def test_untagged_file_conversion(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'untagged_output.txt')
         
         # Convert
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -316,8 +316,8 @@ def test_untagged_file_conversion(env: TestEnvironment, results: TestResults):
         
         # Verify output encoding
         # Note: Output may remain untagged if F_SETTAG is not supported
-        output_encoding = converter.get_file_encoding_fcntl(output_file,
-                                                            verbose=env.verbose)
+        output_encoding = converter.get_file_encoding(output_file,
+                                                      verbose=env.verbose)
         if env.verbose:
             print(f"  Output file encoding: {output_encoding}")
         
@@ -343,8 +343,8 @@ def test_empty_file_conversion(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'empty_output.txt')
         
         # Convert
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -376,8 +376,8 @@ def test_special_characters(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'special_output.txt')
         
         # Convert
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -446,8 +446,8 @@ def test_iso8859_pipe_conversion(env: TestEnvironment, results: TestResults):
             return
         
         # Tag output file
-        converter.set_file_tag_fcntl(output_file, converter.CCSID_IBM1047,
-                                     verbose=env.verbose)
+        converter.set_file_tag(output_file, converter.CCSID_IBM1047,
+                              verbose=env.verbose)
         
         # Verify content
         with open(output_file, 'r', encoding='ibm1047') as f:
@@ -497,8 +497,8 @@ def test_ibm1047_pipe_conversion(env: TestEnvironment, results: TestResults):
             return
         
         # Tag output file
-        converter.set_file_tag_fcntl(output_file, converter.CCSID_IBM1047,
-                                     verbose=env.verbose)
+        converter.set_file_tag(output_file, converter.CCSID_IBM1047,
+                              verbose=env.verbose)
         
         # Verify content
         with open(output_file, 'r', encoding='ibm1047') as f:
@@ -561,8 +561,8 @@ def test_convert_input_with_iso8859_pipe(env: TestEnvironment, results: TestResu
             return
         
         # Verify output file is tagged as IBM-1047
-        output_encoding = converter.get_file_encoding_fcntl(output_file,
-                                                            verbose=env.verbose)
+        output_encoding = converter.get_file_encoding(output_file,
+                                                      verbose=env.verbose)
         if output_encoding != 'IBM-1047':
             results.add_fail(test_name,
                            f"Output not tagged as IBM-1047: {output_encoding}")
@@ -638,8 +638,8 @@ def test_convert_input_with_ibm1047_pipe(env: TestEnvironment, results: TestResu
             return
         
         # Verify output file is tagged as IBM-1047
-        output_encoding = converter.get_file_encoding_fcntl(output_file,
-                                                            verbose=env.verbose)
+        output_encoding = converter.get_file_encoding(output_file,
+                                                      verbose=env.verbose)
         if output_encoding != 'IBM-1047':
             results.add_fail(test_name,
                            f"Output not tagged as IBM-1047: {output_encoding}")
@@ -675,8 +675,8 @@ def test_large_file_conversion(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'large_output.txt')
         
         # Convert
-        stats = converter.convert_to_ebcdic_fcntl(input_file, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(input_file, output_file,
+                                           verbose=env.verbose)
         
         # Verify
         if not stats['success']:
@@ -712,36 +712,36 @@ def test_file_tag_operations(env: TestEnvironment, results: TestResults):
                                         encoding='iso8859-1', tag=False)
         
         # Check initial state
-        initial_encoding = converter.get_file_encoding_fcntl(test_file, verbose=env.verbose)
+        initial_encoding = converter.get_file_encoding(test_file, verbose=env.verbose)
         if env.verbose:
             print(f"  Initial encoding: {initial_encoding}")
         
         # Try to set tag to ISO8859-1
-        set_result = converter.set_file_tag_fcntl(test_file, converter.CCSID_ISO8859_1,
-                                                  verbose=env.verbose)
+        set_result = converter.set_file_tag(test_file, converter.CCSID_ISO8859_1,
+                                           verbose=env.verbose)
         if not set_result:
             # F_SETTAG may not be supported through Python's fcntl on all z/OS systems
             # This is a known limitation - the read operation (F_CONTROL_CVT) is what matters
             if env.verbose:
-                print(f"  F_SETTAG not supported through Python fcntl (known limitation)")
-                print(f"  Note: F_CONTROL_CVT (read) works correctly, which is the primary need")
+                print("  F_SETTAG not supported through Python fcntl (known limitation)")
+                print("  Note: F_CONTROL_CVT (read) works correctly, which is the primary need")
             results.add_pass(test_name + " (skipped - F_SETTAG not supported)")
             return
         
         # Verify tag
-        encoding = converter.get_file_encoding_fcntl(test_file, verbose=env.verbose)
+        encoding = converter.get_file_encoding(test_file, verbose=env.verbose)
         if encoding != 'ISO8859-1':
             results.add_fail(test_name, f"Tag not set correctly: {encoding}")
             return
         
         # Change tag to IBM-1047
-        if not converter.set_file_tag_fcntl(test_file, converter.CCSID_IBM1047,
-                                           verbose=env.verbose):
+        if not converter.set_file_tag(test_file, converter.CCSID_IBM1047,
+                                     verbose=env.verbose):
             results.add_fail(test_name, "Failed to set IBM-1047 tag")
             return
         
         # Verify new tag
-        encoding = converter.get_file_encoding_fcntl(test_file, verbose=env.verbose)
+        encoding = converter.get_file_encoding(test_file, verbose=env.verbose)
         if encoding != 'IBM-1047':
             results.add_fail(test_name, f"Tag not changed correctly: {encoding}")
             return
@@ -764,8 +764,8 @@ def test_nonexistent_file(env: TestEnvironment, results: TestResults):
         output_file = os.path.join(env.temp_dir, 'error_output.txt')
         
         # Try to convert nonexistent file
-        stats = converter.convert_to_ebcdic_fcntl(nonexistent, output_file,
-                                                  verbose=env.verbose)
+        stats = converter.convert_to_ebcdic(nonexistent, output_file,
+                                           verbose=env.verbose)
         
         # Should fail gracefully
         if stats['success']:
@@ -787,7 +787,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Test driver for ebcdic_converter_fcntl',
+        description='Test driver for zos_ccsid_converter',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -800,7 +800,7 @@ def main():
     
     print("="*70)
     print("EBCDIC Converter Test Suite")
-    print("Testing: ebcdic_converter_fcntl.py")
+    print("Testing: zos_ccsid_converter")
     print("="*70)
     print()
     

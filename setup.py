@@ -3,7 +3,7 @@
 Setup script for zos-ccsid-converter package.
 """
 
-from setuptools import setup, find_packages
+from setuptools import setup
 import os
 
 # Read the README file
@@ -13,16 +13,19 @@ def read_file(filename):
 
 setup(
     name='zos-ccsid-converter',
-    version='0.1.10',
+    version='0.1.11',
     description='z/OS CCSID converter using fcntl for code page detection and conversion',
     long_description=read_file('README.md'),
     long_description_content_type='text/markdown',
     author='Mike Fulton',
     author_email='',
     url='https://github.com/MikeFultonDev/zos_ccsid_converter',
-    packages=find_packages(),
+    packages=['zos_ccsid_converter'],
     package_data={
         'zos_ccsid_converter': ['lib/*.so'],
+    },
+    exclude_package_data={
+        'zos_ccsid_converter.lib': ['*'],
     },
     python_requires='>=3.12',
     classifiers=[

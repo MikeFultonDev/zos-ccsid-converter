@@ -8,10 +8,10 @@ import argparse
 from . import __version__
 from .converter import (
     get_file_tag_info,
-    get_file_encoding_fcntl,
-    convert_to_ebcdic_fcntl,
+    get_file_encoding,
+    convert_to_ebcdic,
     convert_stream_to_ebcdic,
-    set_file_tag_fcntl,
+    set_file_tag,
     CCSID_IBM1047,
     ENCODING_MAP,
 )
@@ -20,7 +20,7 @@ from .converter import (
 def main():
     """Command-line interface for the CCSID converter"""
     parser = argparse.ArgumentParser(
-        description='Convert files to EBCDIC using z/OS fcntl',
+        description='Convert files to EBCDIC using z/OS file tagging',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         prog='zos-ccsid-converter',
         epilog="""
@@ -60,7 +60,7 @@ Examples:
             # Get info from stdin using /dev/stdin path
             # zos-util supports named pipes and special files
             try:
-                encoding = get_file_encoding_fcntl("/dev/stdin", verbose=args.verbose)
+                encoding = get_file_encoding("/dev/stdin", verbose=args.verbose)
                 
                 # Map encoding to CCSID for display
                 ccsid = None
@@ -113,7 +113,7 @@ Examples:
         
         if stats['success']:
             # Tag output file
-            set_file_tag_fcntl(output_file, CCSID_IBM1047, verbose=args.verbose)
+            set_file_tag(output_file, CCSID_IBM1047, verbose=args.verbose)
             print(f"Converted {stats['bytes_read']} bytes from stdin to {output_file}")
             return 0
         else:
@@ -125,8 +125,8 @@ Examples:
             print("ERROR: Both input and output files required", file=sys.stderr)
             parser.print_help()
             return 1
+        stats = convert_to_ebcdic(args.input, args.output, verbose=args.verbose)
         
-        stats = convert_to_ebcdic_fcntl(args.input, args.output, verbose=args.verbose)
         
         if stats['success']:
             print(f"Conversion successful: {stats['bytes_read']} bytes -> {stats['bytes_written']} bytes")

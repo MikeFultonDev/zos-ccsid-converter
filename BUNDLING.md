@@ -22,6 +22,7 @@ make build
 ```
 
 This will:
+
 - Create a virtual environment
 - Bundle the zos_util shared library
 - Build wheel and source distributions in the `dist/` directory
@@ -39,7 +40,7 @@ The `converter.py` module includes a `_load_bundled_zos_util()` function that:
 
 The distributed package includes:
 
-```
+```text
 zos_ccsid_converter/
 ├── __init__.py
 ├── cli.py

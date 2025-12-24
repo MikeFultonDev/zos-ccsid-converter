@@ -129,7 +129,7 @@ class FileTagInfo:
         return f"FileTagInfo(ccsid={self.ccsid}, text={self.text_flag}, encoding={self.encoding_name})"
 
 
-def get_file_encoding_fcntl(path: str, verbose: bool = False) -> str:
+def get_file_encoding(path: str, verbose: bool = False) -> str:
     """
     Get file encoding using zos_util.
     
@@ -202,7 +202,7 @@ def set_file_tag_zos_util(path: str, ccsid: int, text_flag: bool = True,
 
 def _verify_tag_set(path: str, ccsid: int, verbose: bool) -> bool:
     """Verify that the file tag was set correctly."""
-    actual_encoding = get_file_encoding_fcntl(path, verbose=False)
+    actual_encoding = get_file_encoding(path, verbose=False)
     expected_encoding = ENCODING_MAP.get(ccsid, f'CCSID-{ccsid}')
     
     if verbose:
@@ -218,8 +218,8 @@ def _verify_tag_set(path: str, ccsid: int, verbose: bool) -> bool:
     return success
 
 
-def set_file_tag_fcntl(path: str, ccsid: int, text_flag: bool = True,
-                      verbose: bool = False) -> bool:
+def set_file_tag(path: str, ccsid: int, text_flag: bool = True,
+                verbose: bool = False) -> bool:
     """
     Set file CCSID using zos_util module.
     
@@ -328,23 +328,23 @@ def _tag_output_file(output_path: str, encoding: str, verbose: bool) -> None:
     if not should_tag:
         return
     
-    tag_success = set_file_tag_fcntl(output_path, CCSID_IBM1047, verbose=verbose)
+    tag_success = set_file_tag(output_path, CCSID_IBM1047, verbose=verbose)
     if tag_success:
         _log_verbose("Tagged output file as IBM-1047", verbose)
     elif encoding == 'ISO8859-1':
         _log_verbose("Warning: Could not tag output file", verbose)
 
 
-def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
-                           verbose: bool = False) -> Dict[str, Any]:
+def convert_to_ebcdic(input_path: str, output_path: str,
+                     verbose: bool = False) -> Dict[str, Any]:
     """
-    Convert input file to EBCDIC using fcntl-based encoding detection.
+    Convert input file to EBCDIC using zos_util for encoding detection.
     
     This function:
-    1. Uses fcntl to detect input file encoding
+    1. Uses zos_util to detect input file encoding
     2. Converts from ASCII to EBCDIC if needed
     3. Handles unconvertible characters gracefully (leaves them unchanged)
-    4. Tags output file using fcntl
+    4. Tags output file using zos_util
     5. Returns conversion statistics
     
     Args:
@@ -375,8 +375,8 @@ def convert_to_ebcdic_fcntl(input_path: str, output_path: str,
     }
     
     try:
-        # Detect input encoding using fcntl
-        encoding = get_file_encoding_fcntl(input_path, verbose=verbose)
+        # Detect input encoding using zos_util
+        encoding = get_file_encoding(input_path, verbose=verbose)
         stats['encoding_detected'] = encoding
         
         _log_verbose(f"Input file: {input_path}", verbose)
@@ -575,7 +575,7 @@ class CodePageService:
             elif ccsid == 1047:
                 print("File is EBCDIC/IBM-1047")
         """
-        encoding_name = get_file_encoding_fcntl(path, verbose=self.verbose)
+        encoding_name = get_file_encoding(path, verbose=self.verbose)
         
         # Map encoding name back to CCSID
         for ccsid, name in ENCODING_MAP.items():
@@ -598,7 +598,7 @@ class CodePageService:
             encoding = service.get_encoding_name('/tmp/file.txt')
             print(f"File encoding: {encoding}")
         """
-        return get_file_encoding_fcntl(path, verbose=self.verbose)
+        return get_file_encoding(path, verbose=self.verbose)
     
     def is_ascii(self, path: str) -> bool:
         """Check if file is ASCII/ISO8859-1 encoded"""
@@ -697,8 +697,8 @@ class CodePageService:
         
         # If target is EBCDIC, use the existing function
         if target_encoding == 'IBM-1047':
-            return convert_to_ebcdic_fcntl(input_path, output_path, 
-                                          verbose=self.verbose)
+            return convert_to_ebcdic(input_path, output_path,
+                                    verbose=self.verbose)
         
         # Otherwise, do manual conversion
         try:
@@ -784,8 +784,8 @@ class CodePageService:
                 
                 # Tag the output file
                 if stats['success'] and target_encoding == 'IBM-1047':
-                    set_file_tag_fcntl(output_path, CCSID_IBM1047, 
-                                      verbose=self.verbose)
+                    set_file_tag(output_path, CCSID_IBM1047,
+                                verbose=self.verbose)
                 
                 # Add encoding info to stats
                 stats['encoding_detected'] = source_encoding
@@ -826,7 +826,7 @@ def detect_code_page(path: str, verbose: bool = False) -> int:
         CCSID value (819, 1047, or 0)
         
     Example:
-        from ebcdic_converter_fcntl import detect_code_page
+        from zos_ccsid_converter import detect_code_page
         ccsid = detect_code_page('/tmp/file.txt')
     """
     service = CodePageService(verbose=verbose)
@@ -845,10 +845,10 @@ def detect_encoding(path: str, verbose: bool = False) -> str:
         Encoding name: 'ISO8859-1', 'IBM-1047', or 'untagged'
         
     Example:
-        from ebcdic_converter_fcntl import detect_encoding
+        from zos_ccsid_converter import detect_encoding
         encoding = detect_encoding('/tmp/file.txt')
     """
-    return get_file_encoding_fcntl(path, verbose=verbose)
+    return get_file_encoding(path, verbose=verbose)
 
 
 def convert_data(data: bytes, source_encoding: str, target_encoding: str) -> bytes:
@@ -864,7 +864,7 @@ def convert_data(data: bytes, source_encoding: str, target_encoding: str) -> byt
         Converted bytes
         
     Example:
-        from ebcdic_converter_fcntl import convert_data
+        from zos_ccsid_converter import convert_data
         ebcdic = convert_data(b"Hello", 'ISO8859-1', 'IBM-1047')
     """
     service = CodePageService()
@@ -882,16 +882,16 @@ def main():
         epilog="""
 Examples:
   # Convert a file
-  ebcdic_converter_fcntl.py input.txt output.txt
+  zos-ccsid-converter input.txt output.txt
   
   # Get file encoding info
-  ebcdic_converter_fcntl.py --info input.txt
+  zos-ccsid-converter --info input.txt
   
   # Convert with verbose output
-  ebcdic_converter_fcntl.py -v input.txt output.txt
+  zos-ccsid-converter -v input.txt output.txt
   
   # Convert from stdin to file
-  cat input.txt | ebcdic_converter_fcntl.py --stdin output.txt
+  cat input.txt | zos-ccsid-converter --stdin output.txt
 """
     )
     
@@ -922,7 +922,7 @@ Examples:
         if not args.input or not args.output:
             parser.error("input and output files are required")
         
-        convert_to_ebcdic_fcntl(args.input, args.output, verbose=args.verbose)
+        convert_to_ebcdic(args.input, args.output, verbose=args.verbose)
         return 0
         
     except Exception as e:
