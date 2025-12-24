@@ -9,28 +9,27 @@ All C service usage has been completely simplified to use IBM's zos-util C exten
 ### File Tag Setting
 
 **Only Method: zos-util (No Fallback)**
-- Function: [`set_file_tag_zos_util()`](zos_ccsid_converter/converter.py:287)
-- Uses: `zos_util.chtag(path, ccsid=ccsid, set_txtflag=text_flag)` directly
+- Function: [`set_file_tag()`](zos_ccsid_converter/converter.py)
+- Uses: `zos_util.chtag(path, text=text_flag, ccsid=ccsid)` directly
 - Benefit: Direct C extension access, no ctypes complexity
 - **Hard Requirement**: Raises RuntimeError if zos-util not available
 
 **Entry Point:**
-- All code calls [`set_file_tag_fcntl()`](zos_ccsid_converter/converter.py:350)
+- All code calls [`set_file_tag()`](zos_ccsid_converter/converter.py)
 - This function uses zos-util exclusively (no fallback)
 - Raises RuntimeError if zos-util is not available
 
 ### File Tag Querying
 
 **Only Method: zos-util (No Fallback)**
-- Function: [`get_file_encoding_fcntl()`](zos_ccsid_converter/converter.py:142)
-- Uses: `zos_util.get_tag_info(path)` exclusively - returns `(ccsid, txtflag)` tuple
+- Function: [`get_file_encoding()`](zos_ccsid_converter/converter.py)
+- Uses: `zos_util.get_tag_info(path)` exclusively - returns dictionary with 'ccsid' and 'text' keys
 - Supports ALL file types: regular files, named pipes, special files (/dev/stdin)
 - No fcntl fallback needed
 
 **Entry Point:**
-- All code calls [`get_file_encoding_fcntl()`](zos_ccsid_converter/converter.py:142)
+- All code calls [`get_file_encoding()`](zos_ccsid_converter/converter.py)
 - Uses zos-util exclusively for all file types
-- Removed `fd` parameter (no longer needed)
 
 ## Why zos-util Instead of ctypes
 
@@ -56,32 +55,27 @@ Python's ctypes cannot properly access z/OS system calls. The proper solution is
 
 ### Functions Using zos-util
 
-1. **[`set_file_tag_zos_util()`](zos_ccsid_converter/converter.py:287)**
+1. **[`set_file_tag()`](zos_ccsid_converter/converter.py)**
    - Direct call to `zos_util.chtag()`
-   - Returns True on success, False on failure
-
-2. **[`set_file_tag_fcntl()`](zos_ccsid_converter/converter.py:350)**
-   - Uses `set_file_tag_zos_util()` exclusively
    - Raises RuntimeError if zos-util unavailable
    - No fallback to chtag command
 
-3. **[`get_file_encoding_fcntl()`](zos_ccsid_converter/converter.py:142)**
+2. **[`get_file_encoding()`](zos_ccsid_converter/converter.py)**
    - Direct call to `zos_util.get_tag_info()` for file paths
    - Returns encoding name string
 
-4. **[`get_file_tag_info()`](zos_ccsid_converter/converter.py:323)**
+3. **[`get_file_tag_info()`](zos_ccsid_converter/converter.py)**
    - Direct call to `zos_util.get_tag_info()`
-   - Returns FileTagInfo object with ccsid and text_flag
+   - Returns dictionary with ccsid and text flag
 
 ### Call Sites
 
-All file tag setting operations go through `set_file_tag_fcntl()`:
+All file tag setting operations go through `set_file_tag()`:
 
-1. **[`cli.py:116`](zos_ccsid_converter/cli.py:116)** - Tag output file from stdin
-2. **[`converter.py:489`](zos_ccsid_converter/converter.py:489)** - Tag converted file
-3. **[`converter.py:945`](zos_ccsid_converter/converter.py:945)** - Tag file in batch conversion
+1. **[`cli.py`](zos_ccsid_converter/cli.py)** - Tag output file from stdin
+2. **[`converter.py`](zos_ccsid_converter/converter.py)** - Tag converted files
 
-All call sites use `set_file_tag_fcntl()` which requires zos-util.
+All call sites use `set_file_tag()` which requires zos-util.
 
 ## Removed ALL Structures
 
